@@ -83,11 +83,11 @@ export class Bd2Wiki extends plugin {
       priority: 5000,
       rule: [
         {
-          reg: '^#?bd2\\s*帮助$',
+          reg: '^#?bd2\s*帮助$',
           fnc: 'help'
         },
         {
-          reg: '^#?bd2\\s*(搜索|角色)\\s*(.+)$',
+          reg: '^#?bd2\s*(搜索|角色)\s*(.+)$',
           fnc: 'queryRole'
         }
       ]
@@ -100,7 +100,7 @@ export class Bd2Wiki extends plugin {
   }
 
   async queryRole(e) {
-    const match = e.msg.match(/^#?bd2\\s*(搜索|角色)\\s*(.+)$/)
+    const match = e.msg.match(/^#?bd2\s*(搜索|角色)\s*(.+)$/)
     const keyword = match?.[2]?.trim() || ''
 
     if (!keyword) {
