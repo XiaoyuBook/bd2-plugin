@@ -83,12 +83,8 @@ export class Bd2Wiki extends plugin {
       priority: 5000,
       rule: [
         {
-          reg: '^#?bd2\s*帮助$',
-          fnc: 'help'
-        },
-        {
-          reg: '^#?bd2\s*(搜索|角色)\s*(.+)$',
-          fnc: 'queryRole'
+          reg: '^#?bd2',
+          fnc: 'handleCommand'
         }
       ]
     })
@@ -99,10 +95,20 @@ export class Bd2Wiki extends plugin {
     return true
   }
 
-  async queryRole(e) {
-    const match = e.msg.match(/^#?bd2\s*(搜索|角色)\s*(.+)$/)
-    const keyword = match?.[2]?.trim() || ''
+  async handleCommand(e) {
+    const msg = String(e.msg || '').trim()
 
+    if (/^#?bd2\s*帮助$/.test(msg)) {
+      return this.help()
+    }
+
+    const match = msg.match(/^#?bd2\s*(搜索|角色)\s*(.+)$/)
+    if (!match) {
+      await this.reply(HELP_TEXT)
+      return true
+    }
+
+    const keyword = match[2]?.trim() || ''
     if (!keyword) {
       await this.reply('请输入角色名，例如：#bd2 搜索 奥利维耶')
       return true
