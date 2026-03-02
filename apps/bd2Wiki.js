@@ -10,10 +10,10 @@ const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 
 const HELP_TEXT = [
   '【BD2 Wiki 插件帮助】',
-  '#bd2 搜索 <角色名>  按角色名查询并列出该角色全部皮肤',
-  '#bd2 角色 <角色名>  与搜索等价',
-  '#bd2 更新  拉取当前分支最新代码（仅主人）',
-  '#bd2 帮助'
+  '#bd2 搜索 <角色名> / bd2 搜索 <角色名>  按角色名查询并列出该角色全部皮肤',
+  '#bd2 角色 <角色名> / bd2 角色 <角色名>  与搜索等价',
+  '#bd2更新  拉取当前分支最新代码（仅主人）',
+  '#bd2 帮助 / bd2 帮助'
 ].join('\n')
 
 function trimSkillText(text = '', maxLength = 80) {
@@ -78,7 +78,7 @@ function formatDisambiguation(keyword, roles) {
     lines.push(`... 还有 ${roles.length - maxCount} 个结果`)
   }
 
-  lines.push('示例：#bd2 角色 角色名')
+  lines.push('示例：bd2 角色 角色名')
   return lines.join('\n')
 }
 
@@ -111,7 +111,7 @@ export class Bd2Wiki extends plugin {
 
   async updatePlugin(e) {
     if (!e.isMaster) {
-      await this.reply('仅Bot主人可执行 #bd2 更新。')
+      await this.reply('仅Bot主人可执行 #bd2更新。')
       return true
     }
 
@@ -147,7 +147,7 @@ export class Bd2Wiki extends plugin {
       return this.help()
     }
 
-    if (/^#?bd2\s*更新$/.test(msg)) {
+    if (/^#bd2更新$/.test(msg)) {
       return this.updatePlugin(e)
     }
 
@@ -159,7 +159,7 @@ export class Bd2Wiki extends plugin {
 
     const keyword = match[2]?.trim() || ''
     if (!keyword) {
-      await this.reply('请输入角色名，例如：#bd2 搜索 奥利维耶')
+      await this.reply('请输入角色名，例如：bd2 搜索 奥利维耶')
       return true
     }
 
