@@ -1,10 +1,18 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { exec } from 'node:child_process'
+import { promisify } from 'node:util'
 import plugin from '../../../lib/plugins/plugin.js'
 import { searchRolesByName } from '../model/gamekeeRoleService.js'
+
+const execAsync = promisify(exec)
+const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 const HELP_TEXT = [
   '【BD2 Wiki 插件帮助】',
   '#bd2 搜索 <角色名>  按角色名查询并列出该角色全部皮肤',
   '#bd2 角色 <角色名>  与搜索等价',
+  '#bd2 更新  拉取当前分支最新代码（仅主人）',
   '#bd2 帮助'
 ].join('\n')
 
@@ -74,6 +82,12 @@ function formatDisambiguation(keyword, roles) {
   return lines.join('\n')
 }
 
+function summarizeGitOutput(stdout = '', stderr = '') {
+  const text = `${stdout}\n${stderr}`.trim()
+  if (!text) return '无输出'
+  return text.split('\n').slice(0, 6).join('\n')
+}
+
 export class Bd2Wiki extends plugin {
   constructor() {
     super({
@@ -95,11 +109,46 @@ export class Bd2Wiki extends plugin {
     return true
   }
 
+  async updatePlugin(e) {
+    if (!e.isMaster) {
+      await this.reply('仅Bot主人可执行 #bd2 更新。')
+      return true
+    }
+
+    await this.reply('开始更新 bd2-plugin，请稍候...')
+
+    try {
+      const { stdout, stderr } = await execAsync('git pull --ff-only', {
+        cwd: PLUGIN_DIR,
+        timeout: 30000,
+        maxBuffer: 1024 * 1024
+      })
+
+      const summary = summarizeGitOutput(stdout, stderr)
+      const upToDate = /Already up to date|已经是最新|Already up-to-date/i.test(`${stdout}\n${stderr}`)
+
+      if (upToDate) {
+        await this.reply(`bd2-plugin 已是最新版本。\n${summary}`)
+      } else {
+        await this.reply(`bd2-plugin 更新完成，请重启云崽使新代码生效。\n${summary}`)
+      }
+      return true
+    } catch (error) {
+      logger.error('[bd2-plugin] update failed', error)
+      await this.reply(`更新失败：${error.message || error}`)
+      return true
+    }
+  }
+
   async handleCommand(e) {
     const msg = String(e.msg || '').trim()
 
     if (/^#?bd2\s*帮助$/.test(msg)) {
       return this.help()
+    }
+
+    if (/^#?bd2\s*更新$/.test(msg)) {
+      return this.updatePlugin(e)
     }
 
     const match = msg.match(/^#?bd2\s*(搜索|角色)\s*(.+)$/)
