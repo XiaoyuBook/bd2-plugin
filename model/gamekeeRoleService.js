@@ -318,6 +318,78 @@ function collectPickupEndTimes(node, map) {
   }
 }
 
+function collectPickupEndTimesFromHtml(html = '', map = new Map()) {
+  if (!html) return map
+
+  const anchorRe = /<a[^>]+href="([^"]*\/zsca2\/tj\/(\d+)\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/g
+  let match
+
+  while ((match = anchorRe.exec(html)) !== null) {
+    const contentId = maybeContentId(match[2])
+    if (!contentId) continue
+
+    const left = Math.max(0, match.index - 360)
+    const right = Math.min(html.length, anchorRe.lastIndex + 520)
+    const nearby = html.slice(left, right)
+    let endText = extractUpEndTime(nearby)
+    if (!endText || isExpiredEndTime(endText)) {
+      endText = extractRemainingDays(nearby)
+    }
+    if (!endText || isExpiredEndTime(endText)) continue
+
+    const existing = map.get(contentId) || ''
+    map.set(contentId, pickBetterEndTime(existing, endText))
+  }
+
+  return map
+}
+
+function extractUpItemsFromHtml(source = '') {
+  const anchorRe = /<a[^>]+href="([^"]*\/zsca2\/tj\/(\d+)\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/g
+  const seen = new Set()
+  const items = []
+  let match
+
+  while ((match = anchorRe.exec(source)) !== null) {
+    const href = ensureAbsoluteUrl(match[1])
+    const contentId = maybeContentId(match[2])
+    const rawAnchorText = stripHtmlTags(match[3])
+    const title = rawAnchorText
+      .replace(/(?:截止|截至|结束(?:于|时间)?|到期).*/i, '')
+      .replace(/\d+\s*天/g, '')
+      .trim() || rawAnchorText
+    if (!href || !contentId || !title || seen.has(href)) continue
+
+    const left = Math.max(0, match.index - 360)
+    const right = Math.min(source.length, anchorRe.lastIndex + 520)
+    const nearby = source.slice(left, right)
+    let endTime = extractUpEndTime(nearby)
+    if (isExpiredEndTime(endTime)) {
+      endTime = ''
+    }
+    if (!endTime) {
+      const nearbyDate = extractUpEndTime(nearby)
+      if (nearbyDate && !isExpiredEndTime(nearbyDate)) {
+        endTime = nearbyDate
+      } else {
+        endTime = extractRemainingDays(nearby)
+      }
+    }
+
+    seen.add(href)
+    const styleIndex = Number(href.match(/[?&]style=style(\d+)/)?.[1] || 1)
+    items.push({
+      title,
+      href,
+      contentId,
+      styleIndex,
+      endTime
+    })
+  }
+
+  return items
+}
+
 async function fetchPickupEndTimeMap(forceRefresh = false) {
   const now = Date.now()
   if (!forceRefresh && pickupEndTimeCache.byContentId.size > 0 && now < pickupEndTimeCache.expiresAt) {
@@ -337,7 +409,7 @@ async function fetchPickupEndTimeMap(forceRefresh = false) {
   const stateUrl = ensureAbsoluteUrl(statePathMatch[0])
   const stateText = await fetchText(stateUrl)
   const stateJson = JSON.parse(stateText.replace(/^window\.__INITIAL_STATE__\s*=\s*/, ''))
-  const map = new Map()
+  const map = collectPickupEndTimesFromHtml(html, new Map())
 
   collectPickupEndTimes(stateJson?.ssrComponentData || [], map)
 
@@ -484,53 +556,21 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
     return currentUpCache.items
   }
 
-  const homeHtml = await fetchText(HOME_URL)
-  const section =
-    homeHtml.match(/当前UP评测([\s\S]*?)当前版本攻略/)?.[1] ||
-    homeHtml.match(/当前UP评测([\s\S]*?)服装测评/)?.[1] ||
-    ''
+  let items = []
+  try {
+    const pickupHtml = await fetchText(PICKUP_URL)
+    items = extractUpItemsFromHtml(pickupHtml)
+  } catch {
+    // fallback to HOME page below
+  }
 
-  const source = section || homeHtml
-  const anchorRe = /<a[^>]+href="([^"]*\/zsca2\/tj\/(\d+)\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/g
-  const seen = new Set()
-  const items = []
-  let match
-
-  while ((match = anchorRe.exec(source)) !== null) {
-    const href = ensureAbsoluteUrl(match[1])
-    const contentId = Number(match[2])
-    const rawAnchorText = stripHtmlTags(match[3])
-    const title = rawAnchorText
-      .replace(/(?:截止|截至|结束(?:于|时间)?|到期).*/i, '')
-      .replace(/\d+\s*天/g, '')
-      .trim() || rawAnchorText
-    let endTime = extractUpEndTime(rawAnchorText)
-    if (isExpiredEndTime(endTime)) {
-      endTime = ''
-    }
-    if (!endTime) {
-      // Fallback: time text may sit outside <a>, extract from nearby snippet.
-      const left = Math.max(0, match.index - 220)
-      const right = Math.min(source.length, anchorRe.lastIndex + 320)
-      const nearby = source.slice(left, right)
-      const nearbyDate = extractUpEndTime(nearby)
-      if (nearbyDate && !isExpiredEndTime(nearbyDate)) {
-        endTime = nearbyDate
-      } else {
-        endTime = extractRemainingDays(nearby)
-      }
-    }
-    if (!href || !contentId || !title || seen.has(href)) continue
-
-    seen.add(href)
-    const styleIndex = Number(href.match(/[?&]style=style(\d+)/)?.[1] || 1)
-    items.push({
-      title,
-      href,
-      contentId,
-      styleIndex,
-      endTime
-    })
+  if (items.length === 0) {
+    const homeHtml = await fetchText(HOME_URL)
+    const section =
+      homeHtml.match(/当前UP评测([\s\S]*?)当前版本攻略/)?.[1] ||
+      homeHtml.match(/当前UP评测([\s\S]*?)服装测评/)?.[1] ||
+      ''
+    items = extractUpItemsFromHtml(section || homeHtml)
   }
 
   try {
