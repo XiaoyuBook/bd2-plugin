@@ -185,13 +185,6 @@ function extractUpEndTime(text = '') {
   return ''
 }
 
-function extractRemainingDays(text = '') {
-  const normalized = stripHtmlTags(text)
-  const m = normalized.match(/(\d+)\s*天/)
-  if (!m?.[1]) return ''
-  return `剩余${m[1]}天`
-}
-
 function extractDateLike(text = '') {
   const normalized = stripHtmlTags(text)
   if (!normalized) return ''
@@ -207,6 +200,47 @@ function extractDateLike(text = '') {
   if (single?.[0]) return single[0].replace(/\s+/g, '')
 
   return ''
+}
+
+function parseDateToTs(text = '') {
+  const s = String(text || '').trim()
+  if (!s) return 0
+
+  const full = s.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/)
+  if (full) {
+    const y = Number(full[1])
+    const m = Number(full[2])
+    const d = Number(full[3])
+    const ts = new Date(y, m - 1, d).getTime()
+    return Number.isNaN(ts) ? 0 : ts
+  }
+
+  const md = s.match(/(\d{1,2})\D+(\d{1,2})/)
+  if (md) {
+    const y = new Date().getFullYear()
+    const m = Number(md[1])
+    const d = Number(md[2])
+    const ts = new Date(y, m - 1, d).getTime()
+    return Number.isNaN(ts) ? 0 : ts
+  }
+
+  return 0
+}
+
+function pickBetterEndTime(prev = '', next = '') {
+  if (!next) return prev
+  if (!prev) return next
+
+  const prevTs = parseDateToTs(prev)
+  const nextTs = parseDateToTs(next)
+  if (!prevTs || !nextTs) return nextTs ? next : prev
+
+  const now = Date.now()
+  const prevFuture = prevTs >= now - 24 * 60 * 60 * 1000
+  const nextFuture = nextTs >= now - 24 * 60 * 60 * 1000
+
+  if (prevFuture !== nextFuture) return nextFuture ? next : prev
+  return nextTs >= prevTs ? next : prev
 }
 
 function maybeContentId(value) {
@@ -259,8 +293,9 @@ function collectPickupEndTimes(node, map) {
     }
   }
 
-  if (id && endText && !map.has(id)) {
-    map.set(id, endText)
+  if (id && endText) {
+    const existing = map.get(id) || ''
+    map.set(id, pickBetterEndTime(existing, endText))
   }
 
   for (const value of Object.values(obj)) {
@@ -462,7 +497,7 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
       const left = Math.max(0, match.index - 220)
       const right = Math.min(source.length, anchorRe.lastIndex + 320)
       const nearby = source.slice(left, right)
-      endTime = extractUpEndTime(nearby) || extractRemainingDays(nearby)
+      endTime = extractUpEndTime(nearby)
     }
     if (!href || !contentId || !title || seen.has(href)) continue
 
@@ -480,8 +515,8 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
   try {
     const endTimeMap = await fetchPickupEndTimeMap(forceRefresh)
     for (const item of items) {
-      if (!item.endTime && endTimeMap.has(item.contentId)) {
-        item.endTime = endTimeMap.get(item.contentId) || ''
+      if (endTimeMap.has(item.contentId)) {
+        item.endTime = pickBetterEndTime(item.endTime || '', endTimeMap.get(item.contentId) || '')
       }
     }
   } catch {
