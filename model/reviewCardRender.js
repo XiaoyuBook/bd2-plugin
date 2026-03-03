@@ -23,8 +23,26 @@ function colorClass(color = '') {
   return map[name] || ''
 }
 
+function renderInlineWithBold(text = '') {
+  const parts = String(text).split(/(\*{2}[\s\S]*?\*{2})/g)
+  let html = ''
+
+  for (const part of parts) {
+    if (!part) continue
+    if (/^\*{2}[\s\S]*\*{2}$/.test(part)) {
+      const inner = part.slice(2, -2)
+      html += `<strong>${escapeHtml(inner)}</strong>`
+      continue
+    }
+    html += escapeHtml(part)
+  }
+
+  return html
+}
+
 function renderMarkedText(raw = '', fallback = '') {
   const input = String(raw || fallback || '')
+    .replace(/\*{3}([a-zA-Z]+)\*{3}([\s\S]*?)\*{3}/g, '***$1 $2***')
     .replace(/&nbsp;/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
@@ -35,18 +53,20 @@ function renderMarkedText(raw = '', fallback = '') {
   let match
 
   while ((match = pattern.exec(input)) !== null) {
-    result += escapeHtml(input.slice(lastIndex, match.index))
+    result += renderInlineWithBold(input.slice(lastIndex, match.index))
 
     const cls = colorClass(match[1])
-    const inner = escapeHtml(match[2] || '')
+    const innerRaw = String(match[2] || '').replace(/^[：:]\s*/, '')
+    const inner = renderInlineWithBold(innerRaw)
     result += cls ? `<span class="${cls}">${inner}</span>` : inner
     lastIndex = pattern.lastIndex
   }
 
-  result += escapeHtml(input.slice(lastIndex))
+  result += renderInlineWithBold(input.slice(lastIndex))
   result = result
     .replace(/\*{3}[a-zA-Z]+/g, '')
     .replace(/\*{3}/g, '')
+    .replace(/\*{2}/g, '')
     .replace(/\n/g, '<br/>')
 
   return result.trim()
