@@ -185,6 +185,13 @@ function extractUpEndTime(text = '') {
   return ''
 }
 
+function extractRemainingDays(text = '') {
+  const normalized = stripHtmlTags(text)
+  const m = normalized.match(/(\d+)\s*天/)
+  if (!m?.[1]) return ''
+  return `剩余${m[1]}天`
+}
+
 function extractDateLike(text = '') {
   const normalized = stripHtmlTags(text)
   if (!normalized) return ''
@@ -445,8 +452,18 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
     const href = ensureAbsoluteUrl(match[1])
     const contentId = Number(match[2])
     const rawAnchorText = stripHtmlTags(match[3])
-    const title = rawAnchorText.replace(/(?:截止|截至|结束(?:于|时间)?|到期).*/i, '').trim() || rawAnchorText
-    const endTime = extractUpEndTime(rawAnchorText)
+    const title = rawAnchorText
+      .replace(/(?:截止|截至|结束(?:于|时间)?|到期).*/i, '')
+      .replace(/\d+\s*天/g, '')
+      .trim() || rawAnchorText
+    let endTime = extractUpEndTime(rawAnchorText)
+    if (!endTime) {
+      // Fallback: time text may sit outside <a>, extract from nearby snippet.
+      const left = Math.max(0, match.index - 220)
+      const right = Math.min(source.length, anchorRe.lastIndex + 320)
+      const nearby = source.slice(left, right)
+      endTime = extractUpEndTime(nearby) || extractRemainingDays(nearby)
+    }
     if (!href || !contentId || !title || seen.has(href)) continue
 
     seen.add(href)

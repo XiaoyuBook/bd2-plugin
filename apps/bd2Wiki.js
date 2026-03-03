@@ -139,7 +139,7 @@ function formatCurrentUpList(items) {
   }
 
   for (let i = 0; i < items.length; i += 1) {
-    const endText = items[i].endTime ? `（结束：${items[i].endTime}）` : ''
+    const endText = `（结束：${items[i].endTime || '未知'}）`
     lines.push(`${i + 1}. ${items[i].title}${endText}`)
   }
 
