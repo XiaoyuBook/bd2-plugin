@@ -1,4 +1,5 @@
 import path from 'node:path'
+import fs from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -15,6 +16,8 @@ import { renderUpListCard } from '../model/upListRender.js'
 
 const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const DATA_DIR = path.join(PLUGIN_DIR, 'data')
+const PUSH_STATE_FILE = path.join(DATA_DIR, 'up-push-state.json')
 
 const HELP_TEXT = [
   '【BD2 Wiki 插件帮助】',
@@ -23,10 +26,87 @@ const HELP_TEXT = [
   '#bd2 测评 <角色名> [皮肤序号] / bd2 测评 <角色名> [皮肤序号]',
   '#bd2 当前up测评  列出当前UP测评列表（带序号）',
   '#bd2 up测评 <序号> / #bd2 当前up测评 <序号>  按序号查看测评',
+  '#bd2开启推送 / #bd2 关闭推送  当前群开启/关闭UP新增推送（仅主人）',
+  '#bd2 推送状态  查看当前群推送状态（仅主人）',
   '#bd2更新  拉取当前分支最新代码（仅主人）',
   '#bd2图鉴更新 / #bd2 图鉴更新  更新本地皮肤头像缓存（仅主人）',
   '#bd2 帮助 / bd2 帮助'
 ].join('\n')
+
+let pushStateCache = null
+
+function upItemKey(item) {
+  return `${item?.contentId || 0}:${item?.styleIndex || 1}`
+}
+
+async function ensureDataDir() {
+  await fs.mkdir(DATA_DIR, { recursive: true })
+}
+
+async function loadPushState() {
+  if (pushStateCache) return pushStateCache
+
+  try {
+    const text = await fs.readFile(PUSH_STATE_FILE, 'utf8')
+    const parsed = JSON.parse(text)
+    pushStateCache = {
+      enabledGroups: Array.isArray(parsed?.enabledGroups)
+        ? parsed.enabledGroups.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0)
+        : [],
+      lastKeys: Array.isArray(parsed?.lastKeys) ? parsed.lastKeys.map((v) => String(v)) : []
+    }
+  } catch {
+    pushStateCache = {
+      enabledGroups: [],
+      lastKeys: []
+    }
+  }
+
+  return pushStateCache
+}
+
+async function savePushState(state) {
+  pushStateCache = {
+    enabledGroups: Array.isArray(state?.enabledGroups)
+      ? state.enabledGroups.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0)
+      : [],
+    lastKeys: Array.isArray(state?.lastKeys) ? state.lastKeys.map((v) => String(v)) : []
+  }
+
+  await ensureDataDir()
+  await fs.writeFile(PUSH_STATE_FILE, JSON.stringify(pushStateCache, null, 2), 'utf8')
+}
+
+async function buildUpItemsWithAvatar(items) {
+  return Promise.all(
+    (items || []).map(async (item) => {
+      try {
+        const role = await getRoleByContentId(item.contentId)
+        const skinIndex = Number(item.styleIndex || 1) - 1
+        const avatar = role?.skins?.[skinIndex]?.icon || role?.skins?.[0]?.icon || role?.icon || ''
+        return { ...item, avatar }
+      } catch {
+        return { ...item, avatar: '' }
+      }
+    })
+  )
+}
+
+function imageSegmentFromBuffer(buffer) {
+  const base64 = Buffer.from(buffer).toString('base64')
+  if (typeof segment !== 'undefined' && segment?.image) {
+    return segment.image(`base64://${base64}`)
+  }
+  return `base64://${base64}`
+}
+
+async function sendGroupPush(groupId, message) {
+  if (typeof Bot === 'undefined' || !Bot?.pickGroup) return false
+  const group = Bot.pickGroup(Number(groupId))
+  if (!group?.sendMsg) return false
+  await group.sendMsg(message)
+  return true
+}
 
 function trimSkillText(text = '', maxLength = 80) {
   if (!text) return ''
@@ -167,6 +247,13 @@ export class Bd2Wiki extends plugin {
       dsc: 'BD2 角色与皮肤查询',
       event: 'message',
       priority: 5000,
+      task: [
+        {
+          cron: '0 0/10 * * * ?',
+          name: 'bd2-up-push-check',
+          fnc: 'checkUpPushTask'
+        }
+      ],
       rule: [
         {
           reg: '^#?bd2',
@@ -239,6 +326,130 @@ export class Bd2Wiki extends plugin {
     }
   }
 
+  async enableUpPush(e) {
+    if (!e.isMaster) {
+      await this.reply('仅Bot主人可执行 #bd2开启推送。')
+      return true
+    }
+    if (!e.isGroup) {
+      await this.reply('请在群聊中执行该命令。')
+      return true
+    }
+
+    const state = await loadPushState()
+    const gid = Number(e.group_id)
+
+    if (!state.enabledGroups.includes(gid)) {
+      state.enabledGroups.push(gid)
+      await savePushState(state)
+      await this.reply('BD2 当前UP新增推送已开启。')
+      return true
+    }
+
+    await this.reply('当前群已开启UP新增推送。')
+    return true
+  }
+
+  async disableUpPush(e) {
+    if (!e.isMaster) {
+      await this.reply('仅Bot主人可执行 #bd2关闭推送。')
+      return true
+    }
+    if (!e.isGroup) {
+      await this.reply('请在群聊中执行该命令。')
+      return true
+    }
+
+    const state = await loadPushState()
+    const gid = Number(e.group_id)
+    const nextGroups = state.enabledGroups.filter((v) => v !== gid)
+
+    if (nextGroups.length !== state.enabledGroups.length) {
+      state.enabledGroups = nextGroups
+      await savePushState(state)
+      await this.reply('BD2 当前UP新增推送已关闭。')
+      return true
+    }
+
+    await this.reply('当前群未开启UP新增推送。')
+    return true
+  }
+
+  async showUpPushStatus(e) {
+    if (!e.isMaster) {
+      await this.reply('仅Bot主人可查看推送状态。')
+      return true
+    }
+    if (!e.isGroup) {
+      await this.reply('请在群聊中执行该命令。')
+      return true
+    }
+
+    const state = await loadPushState()
+    const gid = Number(e.group_id)
+    const enabled = state.enabledGroups.includes(gid)
+    await this.reply(enabled ? '当前群UP新增推送：已开启。' : '当前群UP新增推送：未开启。')
+    return true
+  }
+
+  async checkUpPushTask() {
+    try {
+      const state = await loadPushState()
+      if (!state.enabledGroups.length) return true
+
+      const upItems = await fetchCurrentUpReviews(false)
+      const currentKeys = upItems.map((item) => upItemKey(item))
+      const previousKeys = new Set(state.lastKeys || [])
+
+      if (!previousKeys.size) {
+        state.lastKeys = currentKeys
+        await savePushState(state)
+        return true
+      }
+
+      const newItems = upItems.filter((item) => !previousKeys.has(upItemKey(item)))
+      state.lastKeys = currentKeys
+      await savePushState(state)
+
+      if (!newItems.length) return true
+
+      const textLines = ['【BD2 当前UP新增推送】']
+      for (let i = 0; i < newItems.length; i += 1) {
+        const item = newItems[i]
+        const end = item.endTime ? `（结束：${item.endTime}）` : ''
+        textLines.push(`${i + 1}. ${item.title}${end}`)
+      }
+      textLines.push('查看详情：#bd2 当前up测评')
+      const textMessage = textLines.join('\n')
+
+      let imageMessage = null
+      try {
+        const itemsWithAvatar = await buildUpItemsWithAvatar(upItems)
+        const imageBuffer = await renderUpListCard(itemsWithAvatar)
+        if (imageBuffer) {
+          imageMessage = imageSegmentFromBuffer(imageBuffer)
+        }
+      } catch {
+        imageMessage = null
+      }
+
+      for (const gid of state.enabledGroups) {
+        try {
+          await sendGroupPush(gid, textMessage)
+          if (imageMessage) {
+            await sendGroupPush(gid, imageMessage)
+          }
+        } catch (error) {
+          logger.warn('[bd2-plugin] up push failed', gid, error?.message || error)
+        }
+      }
+    } catch (error) {
+      logger.warn('[bd2-plugin] up push task failed', error?.message || error)
+    }
+
+    return true
+  }
+
   async handleCommand(e) {
     const msg = String(e.msg || '').trim()
 
@@ -254,6 +465,18 @@ export class Bd2Wiki extends plugin {
       return this.updateAtlas(e)
     }
 
+    if (/^#bd2\s*开启推送$/.test(msg)) {
+      return this.enableUpPush(e)
+    }
+
+    if (/^#bd2\s*关闭推送$/.test(msg)) {
+      return this.disableUpPush(e)
+    }
+
+    if (/^#bd2\s*推送状态$/.test(msg)) {
+      return this.showUpPushStatus(e)
+    }
+
     const upListMatch = msg.match(/^#?bd2\s*当前\s*up测评(?:\s*(\d+))?$/i)
     const upPickMatch = msg.match(/^#?bd2\s*up测评\s*(\d+)$/i)
     if (upListMatch || upPickMatch) {
@@ -262,18 +485,7 @@ export class Bd2Wiki extends plugin {
       try {
         const upItems = await fetchCurrentUpReviews(false)
         if (!pickedIndex) {
-          const upItemsWithAvatar = await Promise.all(
-            upItems.map(async (item) => {
-              try {
-                const role = await getRoleByContentId(item.contentId)
-                const skinIndex = Number(item.styleIndex || 1) - 1
-                const avatar = role?.skins?.[skinIndex]?.icon || role?.skins?.[0]?.icon || role?.icon || ''
-                return { ...item, avatar }
-              } catch {
-                return { ...item, avatar: '' }
-              }
-            })
-          )
+          const upItemsWithAvatar = await buildUpItemsWithAvatar(upItems)
 
           const listImageBuffer = await renderUpListCard(upItemsWithAvatar)
           if (listImageBuffer) {
