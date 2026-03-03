@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import plugin from '../../../lib/plugins/plugin.js'
-import { searchRolesByName } from '../model/gamekeeRoleService.js'
+import { getRoleReviewByContentId, searchRolesByName } from '../model/gamekeeRoleService.js'
 
 const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -12,6 +12,7 @@ const HELP_TEXT = [
   '【BD2 Wiki 插件帮助】',
   '#bd2 搜索 <角色名> / bd2 搜索 <角色名>  按角色名查询并列出该角色全部皮肤',
   '#bd2 角色 <角色名> / bd2 角色 <角色名>  与搜索等价',
+  '#bd2 测评 <角色名> [皮肤序号] / bd2 测评 <角色名> [皮肤序号]',
   '#bd2更新  拉取当前分支最新代码（仅主人）',
   '#bd2 帮助 / bd2 帮助'
 ].join('\n')
@@ -20,6 +21,12 @@ function trimSkillText(text = '', maxLength = 80) {
   if (!text) return ''
   if (text.length <= maxLength) return text
   return `${text.slice(0, maxLength)}...`
+}
+
+function trimParagraph(text = '', maxLength = 280) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength)}...`
 }
 
 function formatRoleDetail(role) {
@@ -88,6 +95,23 @@ function summarizeGitOutput(stdout = '', stderr = '') {
   return text.split('\n').slice(0, 6).join('\n')
 }
 
+function formatReviewDetail(role, style, skinName, pageUrl) {
+  const lines = []
+  lines.push(`【BD2测评】${role.name} - ${skinName || `皮肤${style.index}`}`)
+  lines.push('')
+  lines.push('抽取建议：')
+  lines.push(trimParagraph([style.mustTake, style.mustTakeValue, style.advice].filter(Boolean).join('；') || '暂无'))
+  lines.push('')
+  lines.push('强度分析：')
+  lines.push(trimParagraph(style.strength || '暂无'))
+  lines.push('')
+  lines.push('环境分析：')
+  lines.push(trimParagraph(style.environment || '暂无'))
+  lines.push('')
+  lines.push(`来源：${pageUrl}`)
+  return lines.join('\n')
+}
+
 export class Bd2Wiki extends plugin {
   constructor() {
     super({
@@ -149,6 +173,48 @@ export class Bd2Wiki extends plugin {
 
     if (/^#bd2更新$/.test(msg)) {
       return this.updatePlugin(e)
+    }
+
+    const reviewMatch = msg.match(/^#?bd2\s*测评\s*(.+)$/)
+    if (reviewMatch) {
+      const payload = reviewMatch[1]?.trim() || ''
+      const parsed = payload.match(/^(.*?)(?:\s+(\d+))?$/)
+      const roleKeyword = parsed?.[1]?.trim() || ''
+      const styleIndex = Number(parsed?.[2] || 1)
+
+      if (!roleKeyword) {
+        await this.reply('请输入角色名，例如：bd2 测评 奥利维耶 4')
+        return true
+      }
+
+      try {
+        const roles = await searchRolesByName(roleKeyword)
+        if (!roles.length) {
+          await this.reply(`未找到角色“${roleKeyword}”，请确认角色名后重试。`)
+          return true
+        }
+        if (roles.length > 1) {
+          await this.reply(formatDisambiguation(roleKeyword, roles))
+          return true
+        }
+
+        const role = roles[0]
+        const review = await getRoleReviewByContentId(role.contentId)
+        const style = review?.styles?.find((item) => item.index === styleIndex) || review?.styles?.[0]
+
+        if (!style) {
+          await this.reply('未找到该角色测评数据。')
+          return true
+        }
+
+        const skinName = role.skins?.[style.index - 1]?.name || ''
+        await this.reply(formatReviewDetail(role, style, skinName, review.pageUrl))
+        return true
+      } catch (error) {
+        logger.error('[bd2-plugin] review query failed', error)
+        await this.reply('测评查询失败：数据源暂时不可用，请稍后重试。')
+        return true
+      }
     }
 
     const match = msg.match(/^#?bd2\s*(搜索|角色)\s*(.+)$/)

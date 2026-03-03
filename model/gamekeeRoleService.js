@@ -1,6 +1,7 @@
 const ROLE_ATLAS_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=jstj'
 const STATE_PATH_RE = /ssr-vuex-store-state\.js\?cacheKey=[^"']+/
 const ROLE_PAGE_COMPONENT = 'pageTjRole'
+const REVIEW_PAGE_COMPONENT = 'PageDetailZSTJ'
 const CACHE_TTL_MS = 30 * 60 * 1000
 
 let roleCache = {
@@ -8,6 +9,8 @@ let roleCache = {
   roles: [],
   updatedAt: 0
 }
+
+const reviewCache = new Map()
 
 function normalizeText(text = '') {
   return String(text).trim().toLowerCase().replace(/\s+/g, '')
@@ -107,6 +110,86 @@ async function fetchRemoteRoles() {
     roles: mapRoleList(roleList),
     updatedAt: Date.now()
   }
+}
+
+function getLocalizedText(value, locale = 'zh-cn') {
+  if (typeof value === 'string') return value.trim()
+  if (!value || typeof value !== 'object') return ''
+  return String(value[locale] || value['zh-hk'] || value.en || '').trim()
+}
+
+function buildReviewStyles(detail) {
+  const eqRaw = detail?.content_tj_eq?.content
+  const eq = typeof eqRaw === 'string' ? JSON.parse(eqRaw || '{}') : {}
+  const styleKeys = Object.keys(eq).filter((key) => /^style\d+$/.test(key))
+  const styles = []
+
+  for (const key of styleKeys) {
+    const index = Number(key.replace('style', ''))
+    const style = eq[key] || {}
+    const mustTake = getLocalizedText(style.must_take)
+    const mustTakeValue = getLocalizedText(style.must_take_value)
+    const advice = getLocalizedText(style.adviceValue)
+    const strength = getLocalizedText(style.strenthValue)
+    const environment = getLocalizedText(style.environmentValue)
+
+    styles.push({
+      index,
+      mustTake,
+      mustTakeValue,
+      advice,
+      strength,
+      environment
+    })
+  }
+
+  styles.sort((a, b) => a.index - b.index)
+  return styles
+}
+
+export async function getRoleReviewByContentId(contentId, forceRefresh = false) {
+  if (!contentId) return null
+
+  const cacheKey = String(contentId)
+  const now = Date.now()
+  const cached = reviewCache.get(cacheKey)
+
+  if (!forceRefresh && cached && now < cached.expiresAt) {
+    return cached
+  }
+
+  const reviewPage = `https://www.gamekee.com/zsca2/tj/${contentId}.html?tab=fzpc&style=style1`
+  const pageHtml = await fetchText(reviewPage)
+  const statePathMatch = pageHtml.match(STATE_PATH_RE)
+  if (!statePathMatch) {
+    throw new Error('failed to locate review SSR state URL')
+  }
+
+  const stateUrl = ensureAbsoluteUrl(statePathMatch[0])
+  const stateText = await fetchText(stateUrl)
+  const stateJson = JSON.parse(stateText.replace(/^window\.__INITIAL_STATE__\s*=\s*/, ''))
+  const reviewComponent = (stateJson?.ssrComponentData || []).find(
+    (item) => item?.componentName === REVIEW_PAGE_COMPONENT
+  )
+
+  if (!reviewComponent?.componentData) {
+    throw new Error('failed to locate review component data')
+  }
+
+  const reviewData = JSON.parse(reviewComponent.componentData)
+  const detail = reviewData?.detail || {}
+  const styles = buildReviewStyles(detail)
+
+  const payload = {
+    contentId,
+    title: String(detail?.title || '').trim(),
+    pageUrl: reviewPage,
+    styles,
+    expiresAt: now + CACHE_TTL_MS
+  }
+
+  reviewCache.set(cacheKey, payload)
+  return payload
 }
 
 export async function getRoleIndex(forceRefresh = false) {
