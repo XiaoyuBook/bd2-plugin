@@ -1,6 +1,7 @@
 const ROLE_ATLAS_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=jstj'
 const STATE_PATH_RE = /ssr-vuex-store-state\.js\?cacheKey=[^"']+/
 const ROLE_PAGE_COMPONENT = 'pageTjRole'
+const REVIEW_PAGE_COMPONENT = 'PageDetailZSTJ'
 const CACHE_TTL_MS = 30 * 60 * 1000
 
 let roleCache = {
@@ -9,8 +10,30 @@ let roleCache = {
   updatedAt: 0
 }
 
+const reviewCache = new Map()
+
 function normalizeText(text = '') {
   return String(text).trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function cleanMarkupText(text = '') {
+  return String(text)
+    // Normalize variant: ***orange***文本*** -> ***orange 文本***
+    .replace(/\*{3}([a-zA-Z]+)\*{3}([\s\S]*?)\*{3}/g, '***$1 $2***')
+    // GameKee color marker like ***orange 文本*** / ***orange文本***
+    .replace(/\*{3}[a-zA-Z]+(?:\s+)?([\s\S]*?)\*{3}/g, (_, inner) =>
+      String(inner || '').replace(/^[：:]\s*/, '')
+    )
+    // Bold marker: **文本**
+    .replace(/\*{2}([\s\S]*?)\*{2}/g, '$1')
+    // Fallback: remove unmatched color prefix / trailing marker only.
+    .replace(/\*{3}[a-zA-Z]+/g, ' ')
+    .replace(/\*{3}/g, ' ')
+    .replace(/\*{2}/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function ensureAbsoluteUrl(url = '') {
@@ -47,7 +70,8 @@ function mapRoleList(roleList = []) {
           birthday: String(skin?.birthday || role?.birthday || '').trim(),
           skillSummary: extractSkillSummary(skin),
           sp: String((skin?.skills?.strengthen?.find((item) => item?.name === '+0') || skin?.skills?.strengthen?.[0])?.sp || '').trim(),
-          cd: String((skin?.skills?.strengthen?.find((item) => item?.name === '+0') || skin?.skills?.strengthen?.[0])?.cd || '').trim()
+          cd: String((skin?.skills?.strengthen?.find((item) => item?.name === '+0') || skin?.skills?.strengthen?.[0])?.cd || '').trim(),
+          icon: ensureAbsoluteUrl(String(skin?.icon || '').trim())
         }))
       : []
 
@@ -59,6 +83,7 @@ function mapRoleList(roleList = []) {
       attr: String(role?.attr || '').trim(),
       damage: String(role?.damage || '').trim(),
       birthday: String(role?.birthday || '').trim(),
+      icon: ensureAbsoluteUrl(String(role?.icon || '').trim()),
       contentId,
       roleUrl,
       skins
@@ -107,6 +132,124 @@ async function fetchRemoteRoles() {
     roles: mapRoleList(roleList),
     updatedAt: Date.now()
   }
+}
+
+function getLocalizedText(value, locale = 'zh-cn') {
+  if (typeof value === 'string') return cleanMarkupText(value)
+  if (!value || typeof value !== 'object') return ''
+  return cleanMarkupText(value[locale] || value['zh-hk'] || value.en || '')
+}
+
+function getLocalizedRawText(value, locale = 'zh-cn') {
+  if (typeof value === 'string') return String(value).trim()
+  if (!value || typeof value !== 'object') return ''
+  return String(value[locale] || value['zh-hk'] || value.en || '').trim()
+}
+
+function buildReviewStyles(detail) {
+  const eqRaw = detail?.content_tj_eq?.content
+  const eq = typeof eqRaw === 'string' ? JSON.parse(eqRaw || '{}') : {}
+  const styleKeys = Object.keys(eq).filter((key) => /^style\d+$/.test(key))
+  const styles = []
+
+  for (const key of styleKeys) {
+    const index = Number(key.replace('style', ''))
+    const style = eq[key] || {}
+    const mustTakeRaw = getLocalizedRawText(style.must_take)
+    const mustTakeValueRaw = getLocalizedRawText(style.must_take_value)
+    const adviceRaw = getLocalizedRawText(style.adviceValue)
+    const strengthRaw = getLocalizedRawText(style.strenthValue)
+    const environmentRaw = getLocalizedRawText(style.environmentValue)
+    const mustTake = getLocalizedText(style.must_take)
+    const mustTakeValue = getLocalizedText(style.must_take_value)
+    const advice = getLocalizedText(style.adviceValue)
+    const strength = getLocalizedText(style.strenthValue)
+    const environment = getLocalizedText(style.environmentValue)
+    const level = getLocalizedText(style.level)
+    const gjlLabel = getLocalizedText(style.gjlLabel) || '推图/塔'
+    const gjlValue = getLocalizedText(style.gjlValue) || '-'
+    const fylLabel = getLocalizedText(style.fylLabel) || 'BOSS'
+    const fylValue = getLocalizedText(style.fylValue) || '-'
+    const mflLabel = getLocalizedText(style.mflLabel) || '末日'
+    const mflValue = getLocalizedText(style.mflValue) || '-'
+    const pvpLabel = 'PVP'
+    const pvpValue = getLocalizedText(style.pvpValue) || '-'
+    const banner = ensureAbsoluteUrl(String(style['bannerImg_宣传图'] || '').trim())
+
+    styles.push({
+      index,
+      level,
+      mustTake,
+      mustTakeValue,
+      mustTakeRaw,
+      mustTakeValueRaw,
+      advice,
+      adviceRaw,
+      strength,
+      strengthRaw,
+      environment,
+      environmentRaw,
+      banner,
+      scene: {
+        gjlLabel,
+        gjlValue,
+        fylLabel,
+        fylValue,
+        mflLabel,
+        mflValue,
+        pvpLabel,
+        pvpValue
+      }
+    })
+  }
+
+  styles.sort((a, b) => a.index - b.index)
+  return styles
+}
+
+export async function getRoleReviewByContentId(contentId, forceRefresh = false) {
+  if (!contentId) return null
+
+  const cacheKey = String(contentId)
+  const now = Date.now()
+  const cached = reviewCache.get(cacheKey)
+
+  if (!forceRefresh && cached && now < cached.expiresAt) {
+    return cached
+  }
+
+  const reviewPage = `https://www.gamekee.com/zsca2/tj/${contentId}.html?tab=fzpc&style=style1`
+  const pageHtml = await fetchText(reviewPage)
+  const statePathMatch = pageHtml.match(STATE_PATH_RE)
+  if (!statePathMatch) {
+    throw new Error('failed to locate review SSR state URL')
+  }
+
+  const stateUrl = ensureAbsoluteUrl(statePathMatch[0])
+  const stateText = await fetchText(stateUrl)
+  const stateJson = JSON.parse(stateText.replace(/^window\.__INITIAL_STATE__\s*=\s*/, ''))
+  const reviewComponent = (stateJson?.ssrComponentData || []).find(
+    (item) => item?.componentName === REVIEW_PAGE_COMPONENT
+  )
+
+  if (!reviewComponent?.componentData) {
+    throw new Error('failed to locate review component data')
+  }
+
+  const reviewData = JSON.parse(reviewComponent.componentData)
+  const detail = reviewData?.detail || {}
+  const styles = buildReviewStyles(detail)
+
+  const payload = {
+    contentId,
+    title: String(detail?.title || '').trim(),
+    pageUrl: reviewPage,
+    styles,
+    expiresAt: now + CACHE_TTL_MS
+  }
+
+  reviewCache.set(cacheKey, payload)
+  return payload
 }
 
 export async function getRoleIndex(forceRefresh = false) {
