@@ -265,11 +265,16 @@ export class Bd2Wiki extends plugin {
           roleIcon: role.icon || role.skins?.[style.index - 1]?.icon || role.skins?.[0]?.icon || '',
           level: style.level || '未知',
           mustTake: style.mustTake || '抽取建议待补充',
+          mustTakeRaw: style.mustTakeRaw || '',
           mustTakeValue: style.mustTakeValue || '-',
+          mustTakeValueRaw: style.mustTakeValueRaw || '',
           scene: style.scene || {},
           advice: style.advice || '暂无',
+          adviceRaw: style.adviceRaw || '',
           strength: style.strength || '暂无',
+          strengthRaw: style.strengthRaw || '',
           environment: style.environment || '暂无',
+          environmentRaw: style.environmentRaw || '',
           banner: style.banner || ''
         }
 
