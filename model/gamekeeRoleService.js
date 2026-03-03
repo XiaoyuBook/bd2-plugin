@@ -1,6 +1,7 @@
 const ROLE_ATLAS_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=jstj'
 const HOME_URL = 'https://www.gamekee.com/zsca2/'
 const PICKUP_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=pickUp'
+const BDROSTER_ROLE_URL = 'https://www.gamekee.com/v1/bdRoster/query-role-list'
 const STATE_PATH_RE = /ssr-vuex-store-state\.js\?cacheKey=[^"']+/
 const ROLE_PAGE_COMPONENT = 'pageTjRole'
 const REVIEW_PAGE_COMPONENT = 'PageDetailZSTJ'
@@ -19,6 +20,10 @@ let currentUpCache = {
   items: []
 }
 let pickupEndTimeCache = {
+  expiresAt: 0,
+  byContentId: new Map()
+}
+let rosterEndTimeCache = {
   expiresAt: 0,
   byContentId: new Map()
 }
@@ -115,6 +120,30 @@ async function fetchText(url) {
   }
 
   return response.text()
+}
+
+async function fetchJson(url, headers = {}) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
+    headers: {
+      'user-agent': 'bd2-plugin/0.1 (+https://github.com/XiaoyuBook/bd2-plugin)',
+      ...headers
+    }
+  })
+
+  if (!response.ok) {
+    throw new Error(`request failed: ${response.status} ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+function formatEndAt(ts) {
+  const n = Number(ts)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  const d = new Date(n * 1000)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
 }
 
 async function fetchRemoteRoles() {
@@ -550,6 +579,39 @@ export async function getRoleByContentId(contentId) {
   return roles.find((role) => String(role?.contentId) === String(contentId)) || null
 }
 
+async function fetchRosterEndTimeMap(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && rosterEndTimeCache.byContentId.size > 0 && now < rosterEndTimeCache.expiresAt) {
+    return rosterEndTimeCache.byContentId
+  }
+
+  const data = await fetchJson(BDROSTER_ROLE_URL, {
+    'game-alias': 'zsca2',
+    Lang: 'zh-cn',
+    'device-num': '1'
+  })
+  const groups = Array.isArray(data?.data?.role) ? data.data.role : []
+  const map = new Map()
+
+  for (const group of groups) {
+    const children = Array.isArray(group?.children) ? group.children : []
+    for (const child of children) {
+      const contentId = maybeContentId(child?.content_id)
+      if (!contentId) continue
+      const endText = formatEndAt(child?.end_at)
+      if (!endText || isExpiredEndTime(endText)) continue
+      const existing = map.get(contentId) || ''
+      map.set(contentId, pickBetterEndTime(existing, endText))
+    }
+  }
+
+  rosterEndTimeCache = {
+    byContentId: map,
+    expiresAt: now + UP_CACHE_TTL_MS
+  }
+  return rosterEndTimeCache.byContentId
+}
+
 export async function fetchCurrentUpReviews(forceRefresh = false) {
   const now = Date.now()
   if (!forceRefresh && currentUpCache.items.length > 0 && now < currentUpCache.expiresAt) {
@@ -584,6 +646,18 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
     }
   } catch {
     // fallback to title-regex extracted endTime only
+  }
+
+  try {
+    const apiEndTimeMap = await fetchRosterEndTimeMap(forceRefresh)
+    for (const item of items) {
+      if (!apiEndTimeMap.has(item.contentId)) continue
+      const candidate = apiEndTimeMap.get(item.contentId) || ''
+      if (!candidate || isExpiredEndTime(candidate)) continue
+      item.endTime = pickBetterEndTime(item.endTime || '', candidate)
+    }
+  } catch {
+    // fallback to previous source only
   }
 
   currentUpCache = {
