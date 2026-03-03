@@ -4,6 +4,7 @@ import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import plugin from '../../../lib/plugins/plugin.js'
 import { getRoleReviewByContentId, searchRolesByName } from '../model/gamekeeRoleService.js'
+import { renderReviewCard } from '../model/reviewCardRender.js'
 
 const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -98,6 +99,13 @@ function summarizeGitOutput(stdout = '', stderr = '') {
 function formatReviewDetail(role, style, skinName, pageUrl) {
   const lines = []
   lines.push(`【BD2测评】${role.name} - ${skinName || `皮肤${style.index}`}`)
+  lines.push(`皮肤强度：${style.level || '未知'}`)
+  lines.push(
+    `${style.scene?.gjlLabel || '推图/塔'}：${style.scene?.gjlValue || '-'} | ` +
+      `${style.scene?.fylLabel || 'BOSS'}：${style.scene?.fylValue || '-'} | ` +
+      `${style.scene?.mflLabel || '末日'}：${style.scene?.mflValue || '-'} | ` +
+      `${style.scene?.pvpLabel || 'PVP'}：${style.scene?.pvpValue || '-'}`
+  )
   lines.push('')
   lines.push('抽取建议：')
   lines.push(trimParagraph([style.mustTake, style.mustTakeValue, style.advice].filter(Boolean).join('；') || '暂无'))
@@ -110,6 +118,16 @@ function formatReviewDetail(role, style, skinName, pageUrl) {
   lines.push('')
   lines.push(`来源：${pageUrl}`)
   return lines.join('\n')
+}
+
+async function replyImage(e, buffer) {
+  const base64 = Buffer.from(buffer).toString('base64')
+  if (typeof segment !== 'undefined' && segment?.image) {
+    await e.reply(segment.image(`base64://${base64}`))
+    return true
+  }
+  await e.reply(`base64://${base64}`)
+  return true
 }
 
 export class Bd2Wiki extends plugin {
@@ -208,6 +226,26 @@ export class Bd2Wiki extends plugin {
         }
 
         const skinName = role.skins?.[style.index - 1]?.name || ''
+        const renderData = {
+          roleName: role.name,
+          skinName: skinName || `皮肤${style.index}`,
+          roleIcon: role.icon || role.skins?.[style.index - 1]?.icon || role.skins?.[0]?.icon || '',
+          level: style.level || '未知',
+          mustTake: style.mustTake || '抽取建议待补充',
+          mustTakeValue: style.mustTakeValue || '-',
+          scene: style.scene || {},
+          advice: style.advice || '暂无',
+          strength: style.strength || '暂无',
+          environment: style.environment || '暂无',
+          banner: style.banner || ''
+        }
+
+        const imageBuffer = await renderReviewCard(renderData)
+        if (imageBuffer) {
+          await replyImage(e, imageBuffer)
+          return true
+        }
+
         await this.reply(formatReviewDetail(role, style, skinName, review.pageUrl))
         return true
       } catch (error) {

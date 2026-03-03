@@ -24,5 +24,6 @@
 - 数据源为 GameKee 角色图鉴页（`/zsca2/jstj/122229?tab=jstj`）和角色评测页（`/zsca2/tj/{contentId}.html?tab=fzpc`）的 SSR 数据。
 - 插件按角色名检索，不以皮肤名作为主检索入口。
 - 命中单个角色时会一次性列出该角色所有皮肤（含基础技能摘要）。
-- 测评数据从结构化字段提取（`adviceValue / strenthValue / environmentValue`）。
+- 测评默认返回图片卡片（角色图 + 皮肤强度 + 场景评级 + 三段分析），渲染失败时自动回退文字。
+- 测评数据从结构化字段提取（`level / must_take / must_take_value / adviceValue / strenthValue / environmentValue`）。
 - 执行 `#bd2更新` 后建议重启云崽以加载最新代码。

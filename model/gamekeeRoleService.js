@@ -50,7 +50,8 @@ function mapRoleList(roleList = []) {
           birthday: String(skin?.birthday || role?.birthday || '').trim(),
           skillSummary: extractSkillSummary(skin),
           sp: String((skin?.skills?.strengthen?.find((item) => item?.name === '+0') || skin?.skills?.strengthen?.[0])?.sp || '').trim(),
-          cd: String((skin?.skills?.strengthen?.find((item) => item?.name === '+0') || skin?.skills?.strengthen?.[0])?.cd || '').trim()
+          cd: String((skin?.skills?.strengthen?.find((item) => item?.name === '+0') || skin?.skills?.strengthen?.[0])?.cd || '').trim(),
+          icon: ensureAbsoluteUrl(String(skin?.icon || '').trim())
         }))
       : []
 
@@ -62,6 +63,7 @@ function mapRoleList(roleList = []) {
       attr: String(role?.attr || '').trim(),
       damage: String(role?.damage || '').trim(),
       birthday: String(role?.birthday || '').trim(),
+      icon: ensureAbsoluteUrl(String(role?.icon || '').trim()),
       contentId,
       roleUrl,
       skins
@@ -132,14 +134,36 @@ function buildReviewStyles(detail) {
     const advice = getLocalizedText(style.adviceValue)
     const strength = getLocalizedText(style.strenthValue)
     const environment = getLocalizedText(style.environmentValue)
+    const level = getLocalizedText(style.level)
+    const gjlLabel = getLocalizedText(style.gjlLabel) || '推图/塔'
+    const gjlValue = getLocalizedText(style.gjlValue) || '-'
+    const fylLabel = getLocalizedText(style.fylLabel) || 'BOSS'
+    const fylValue = getLocalizedText(style.fylValue) || '-'
+    const mflLabel = getLocalizedText(style.mflLabel) || '末日'
+    const mflValue = getLocalizedText(style.mflValue) || '-'
+    const pvpLabel = 'PVP'
+    const pvpValue = getLocalizedText(style.pvpValue) || '-'
+    const banner = ensureAbsoluteUrl(String(style['bannerImg_宣传图'] || '').trim())
 
     styles.push({
       index,
+      level,
       mustTake,
       mustTakeValue,
       advice,
       strength,
-      environment
+      environment,
+      banner,
+      scene: {
+        gjlLabel,
+        gjlValue,
+        fylLabel,
+        fylValue,
+        mflLabel,
+        mflValue,
+        pvpLabel,
+        pvpValue
+      }
     })
   }
 
