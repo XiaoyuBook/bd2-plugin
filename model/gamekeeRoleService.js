@@ -160,6 +160,26 @@ function stripHtmlTags(text = '') {
     .trim()
 }
 
+function extractUpEndTime(text = '') {
+  const normalized = stripHtmlTags(text)
+
+  const rangeMatch =
+    normalized.match(/(\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*[日]?\s*[-~至到]\s*\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?)/) ||
+    normalized.match(/(\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?)/)
+  if (rangeMatch?.[1]) {
+    return rangeMatch[1].replace(/\s+/g, '')
+  }
+
+  const endMatch =
+    normalized.match(/(?:截止|截至|结束(?:于|时间)?|到期)\s*[:：]?\s*(\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?)/i) ||
+    normalized.match(/(?:截止|截至|结束(?:于|时间)?|到期)\s*[:：]?\s*(\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?)/i)
+  if (endMatch?.[1]) {
+    return endMatch[1].replace(/\s+/g, '')
+  }
+
+  return ''
+}
+
 function buildReviewStyles(detail) {
   const eqRaw = detail?.content_tj_eq?.content
   const eq = typeof eqRaw === 'string' ? JSON.parse(eqRaw || '{}') : {}
@@ -311,7 +331,9 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
   while ((match = anchorRe.exec(source)) !== null) {
     const href = ensureAbsoluteUrl(match[1])
     const contentId = Number(match[2])
-    const title = stripHtmlTags(match[3])
+    const rawAnchorText = stripHtmlTags(match[3])
+    const title = rawAnchorText.replace(/(?:截止|截至|结束(?:于|时间)?|到期).*/i, '').trim() || rawAnchorText
+    const endTime = extractUpEndTime(rawAnchorText)
     if (!href || !contentId || !title || seen.has(href)) continue
 
     seen.add(href)
@@ -320,7 +342,8 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
       title,
       href,
       contentId,
-      styleIndex
+      styleIndex,
+      endTime
     })
   }
 

@@ -139,7 +139,8 @@ function formatCurrentUpList(items) {
   }
 
   for (let i = 0; i < items.length; i += 1) {
-    lines.push(`${i + 1}. ${items[i].title}`)
+    const endText = items[i].endTime ? `（结束：${items[i].endTime}）` : ''
+    lines.push(`${i + 1}. ${items[i].title}${endText}`)
   }
 
   lines.push('')
@@ -283,7 +284,7 @@ export class Bd2Wiki extends plugin {
         const renderData = {
           roleName,
           skinName,
-          roleIcon: role?.icon || role?.skins?.[style.index - 1]?.icon || role?.skins?.[0]?.icon || '',
+          roleIcon: role?.skins?.[style.index - 1]?.icon || role?.skins?.[0]?.icon || role?.icon || '',
           level: style.level || '未知',
           mustTake: style.mustTake || '抽取建议待补充',
           mustTakeRaw: style.mustTakeRaw || '',
@@ -350,7 +351,7 @@ export class Bd2Wiki extends plugin {
         const renderData = {
           roleName: role.name,
           skinName: skinName || `皮肤${style.index}`,
-          roleIcon: role.icon || role.skins?.[style.index - 1]?.icon || role.skins?.[0]?.icon || '',
+          roleIcon: role.skins?.[style.index - 1]?.icon || role.skins?.[0]?.icon || role.icon || '',
           level: style.level || '未知',
           mustTake: style.mustTake || '抽取建议待补充',
           mustTakeRaw: style.mustTakeRaw || '',
