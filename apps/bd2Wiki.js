@@ -3,9 +3,15 @@ import { fileURLToPath } from 'node:url'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import plugin from '../../../lib/plugins/plugin.js'
-import { getRoleReviewByContentId, searchRolesByName } from '../model/gamekeeRoleService.js'
+import {
+  fetchCurrentUpReviews,
+  getRoleByContentId,
+  getRoleReviewByContentId,
+  searchRolesByName
+} from '../model/gamekeeRoleService.js'
 import { updateAtlasImageCache } from '../model/atlasImageCache.js'
 import { renderReviewCard } from '../model/reviewCardRender.js'
+import { renderUpListCard } from '../model/upListRender.js'
 
 const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -15,6 +21,8 @@ const HELP_TEXT = [
   '#bd2 搜索 <角色名> / bd2 搜索 <角色名>  按角色名查询并列出该角色全部皮肤',
   '#bd2 角色 <角色名> / bd2 角色 <角色名>  与搜索等价',
   '#bd2 测评 <角色名> [皮肤序号] / bd2 测评 <角色名> [皮肤序号]',
+  '#bd2 当前up测评  列出当前UP测评列表（带序号）',
+  '#bd2 up测评 <序号> / #bd2 当前up测评 <序号>  按序号查看测评',
   '#bd2更新  拉取当前分支最新代码（仅主人）',
   '#bd2图鉴更新 / #bd2 图鉴更新  更新本地皮肤头像缓存（仅主人）',
   '#bd2 帮助 / bd2 帮助'
@@ -122,6 +130,26 @@ function formatReviewDetail(role, style, skinName, pageUrl) {
   return lines.join('\n')
 }
 
+function formatCurrentUpList(items) {
+  const lines = []
+  lines.push('【BD2 当前UP测评】')
+
+  if (!items.length) {
+    lines.push('暂未获取到当前UP测评列表，请稍后重试。')
+    return lines.join('\n')
+  }
+
+  for (let i = 0; i < items.length; i += 1) {
+    const endText = `（结束：${items[i].endTime || '未知'}）`
+    lines.push(`${i + 1}. ${items[i].title}${endText}`)
+  }
+
+  lines.push('')
+  lines.push('查看某条测评：')
+  lines.push('示例：#bd2 up测评 1')
+  return lines.join('\n')
+}
+
 async function replyImage(e, buffer) {
   const base64 = Buffer.from(buffer).toString('base64')
   if (typeof segment !== 'undefined' && segment?.image) {
@@ -224,6 +252,86 @@ export class Bd2Wiki extends plugin {
 
     if (/^#bd2\s*图鉴更新$/.test(msg)) {
       return this.updateAtlas(e)
+    }
+
+    const upListMatch = msg.match(/^#?bd2\s*当前\s*up测评(?:\s*(\d+))?$/i)
+    const upPickMatch = msg.match(/^#?bd2\s*up测评\s*(\d+)$/i)
+    if (upListMatch || upPickMatch) {
+      const pickedIndex = Number(upPickMatch?.[1] || upListMatch?.[1] || 0)
+
+      try {
+        const upItems = await fetchCurrentUpReviews(false)
+        if (!pickedIndex) {
+          const upItemsWithAvatar = await Promise.all(
+            upItems.map(async (item) => {
+              try {
+                const role = await getRoleByContentId(item.contentId)
+                const skinIndex = Number(item.styleIndex || 1) - 1
+                const avatar = role?.skins?.[skinIndex]?.icon || role?.skins?.[0]?.icon || role?.icon || ''
+                return { ...item, avatar }
+              } catch {
+                return { ...item, avatar: '' }
+              }
+            })
+          )
+
+          const listImageBuffer = await renderUpListCard(upItemsWithAvatar)
+          if (listImageBuffer) {
+            await replyImage(e, listImageBuffer)
+            return true
+          }
+          await this.reply(formatCurrentUpList(upItems))
+          return true
+        }
+
+        if (!Number.isInteger(pickedIndex) || pickedIndex < 1 || pickedIndex > upItems.length) {
+          await this.reply(`序号无效，请输入 1-${upItems.length} 之间的数字。`)
+          return true
+        }
+
+        const picked = upItems[pickedIndex - 1]
+        const review = await getRoleReviewByContentId(picked.contentId)
+        const style = review?.styles?.find((item) => item.index === picked.styleIndex) || review?.styles?.[0]
+        if (!style) {
+          await this.reply('未找到该UP测评数据。')
+          return true
+        }
+
+        const role = await getRoleByContentId(picked.contentId)
+        const roleName = role?.name || picked.title
+        const skinName = role?.skins?.[style.index - 1]?.name || `皮肤${style.index}`
+        const renderData = {
+          roleName,
+          skinName,
+          roleIcon: role?.skins?.[style.index - 1]?.icon || role?.skins?.[0]?.icon || role?.icon || '',
+          level: style.level || '未知',
+          mustTake: style.mustTake || '抽取建议待补充',
+          mustTakeRaw: style.mustTakeRaw || '',
+          mustTakeValue: style.mustTakeValue || '-',
+          mustTakeValueRaw: style.mustTakeValueRaw || '',
+          scene: style.scene || {},
+          advice: style.advice || '暂无',
+          adviceRaw: style.adviceRaw || '',
+          strength: style.strength || '暂无',
+          strengthRaw: style.strengthRaw || '',
+          environment: style.environment || '暂无',
+          environmentRaw: style.environmentRaw || '',
+          banner: style.banner || ''
+        }
+
+        const imageBuffer = await renderReviewCard(renderData)
+        if (imageBuffer) {
+          await replyImage(e, imageBuffer)
+          return true
+        }
+
+        await this.reply(formatReviewDetail({ name: roleName }, style, skinName, picked.href || review.pageUrl))
+        return true
+      } catch (error) {
+        logger.error('[bd2-plugin] up review query failed', error)
+        await this.reply('当前UP测评查询失败：数据源暂时不可用，请稍后重试。')
+        return true
+      }
     }
 
     const reviewMatch = msg.match(/^#?bd2\s*测评\s*(.+)$/)

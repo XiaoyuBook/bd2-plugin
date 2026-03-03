@@ -1,8 +1,12 @@
 const ROLE_ATLAS_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=jstj'
+const HOME_URL = 'https://www.gamekee.com/zsca2/'
+const PICKUP_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=pickUp'
+const BDROSTER_ROLE_URL = 'https://www.gamekee.com/v1/bdRoster/query-role-list'
 const STATE_PATH_RE = /ssr-vuex-store-state\.js\?cacheKey=[^"']+/
 const ROLE_PAGE_COMPONENT = 'pageTjRole'
 const REVIEW_PAGE_COMPONENT = 'PageDetailZSTJ'
 const CACHE_TTL_MS = 30 * 60 * 1000
+const UP_CACHE_TTL_MS = 10 * 60 * 1000
 
 let roleCache = {
   expiresAt: 0,
@@ -11,6 +15,18 @@ let roleCache = {
 }
 
 const reviewCache = new Map()
+let currentUpCache = {
+  expiresAt: 0,
+  items: []
+}
+let pickupEndTimeCache = {
+  expiresAt: 0,
+  byContentId: new Map()
+}
+let rosterEndTimeCache = {
+  expiresAt: 0,
+  byContentId: new Map()
+}
 
 function normalizeText(text = '') {
   return String(text).trim().toLowerCase().replace(/\s+/g, '')
@@ -106,6 +122,30 @@ async function fetchText(url) {
   return response.text()
 }
 
+async function fetchJson(url, headers = {}) {
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(20000),
+    headers: {
+      'user-agent': 'bd2-plugin/0.1 (+https://github.com/XiaoyuBook/bd2-plugin)',
+      ...headers
+    }
+  })
+
+  if (!response.ok) {
+    throw new Error(`request failed: ${response.status} ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
+function formatEndAt(ts) {
+  const n = Number(ts)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  const d = new Date(n * 1000)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+}
+
 async function fetchRemoteRoles() {
   const atlasHtml = await fetchText(ROLE_ATLAS_URL)
   const statePathMatch = atlasHtml.match(STATE_PATH_RE)
@@ -144,6 +184,269 @@ function getLocalizedRawText(value, locale = 'zh-cn') {
   if (typeof value === 'string') return String(value).trim()
   if (!value || typeof value !== 'object') return ''
   return String(value[locale] || value['zh-hk'] || value.en || '').trim()
+}
+
+function stripHtmlTags(text = '') {
+  return String(text)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractUpEndTime(text = '') {
+  const normalized = stripHtmlTags(text)
+
+  const rangeMatch =
+    normalized.match(/(\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*[日]?\s*[-~至到]\s*\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?)/) ||
+    normalized.match(/(\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?)/)
+  if (rangeMatch?.[1]) {
+    return rangeMatch[1].replace(/\s+/g, '')
+  }
+
+  const endMatch =
+    normalized.match(/(?:截止|截至|结束(?:于|时间)?|到期)\s*[:：]?\s*(\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?)/i) ||
+    normalized.match(/(?:截止|截至|结束(?:于|时间)?|到期)\s*[:：]?\s*(\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?)/i)
+  if (endMatch?.[1]) {
+    return endMatch[1].replace(/\s+/g, '')
+  }
+
+  return ''
+}
+
+function extractRemainingDays(text = '') {
+  const normalized = stripHtmlTags(text)
+  const m = normalized.match(/(\d+)\s*天/)
+  if (!m?.[1]) return ''
+  return `剩余${m[1]}天`
+}
+
+function extractDateLike(text = '') {
+  const normalized = stripHtmlTags(text)
+  if (!normalized) return ''
+
+  const range =
+    normalized.match(/\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*[日]?\s*[-~至到]\s*\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?/) ||
+    normalized.match(/\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?\s*[-~至到]\s*\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?/)
+  if (range?.[0]) return range[0].replace(/\s+/g, '')
+
+  const single =
+    normalized.match(/\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?/) ||
+    normalized.match(/\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?/)
+  if (single?.[0]) return single[0].replace(/\s+/g, '')
+
+  return ''
+}
+
+function parseDateToTs(text = '') {
+  const s = String(text || '').trim()
+  if (!s) return 0
+
+  const full = s.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/)
+  if (full) {
+    const y = Number(full[1])
+    const m = Number(full[2])
+    const d = Number(full[3])
+    const ts = new Date(y, m - 1, d).getTime()
+    return Number.isNaN(ts) ? 0 : ts
+  }
+
+  const md = s.match(/(\d{1,2})\D+(\d{1,2})/)
+  if (md) {
+    const y = new Date().getFullYear()
+    const m = Number(md[1])
+    const d = Number(md[2])
+    const ts = new Date(y, m - 1, d).getTime()
+    return Number.isNaN(ts) ? 0 : ts
+  }
+
+  return 0
+}
+
+function isExpiredEndTime(text = '') {
+  const ts = parseDateToTs(text)
+  if (!ts) return false
+  return ts < Date.now() - 7 * 24 * 60 * 60 * 1000
+}
+
+function pickBetterEndTime(prev = '', next = '') {
+  if (!next) return prev
+  if (!prev) return next
+
+  const prevTs = parseDateToTs(prev)
+  const nextTs = parseDateToTs(next)
+  if (!prevTs || !nextTs) return nextTs ? next : prev
+
+  const now = Date.now()
+  const prevFuture = prevTs >= now - 24 * 60 * 60 * 1000
+  const nextFuture = nextTs >= now - 24 * 60 * 60 * 1000
+
+  if (prevFuture !== nextFuture) return nextFuture ? next : prev
+  return nextTs >= prevTs ? next : prev
+}
+
+function maybeContentId(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return 0
+  return n
+}
+
+function collectPickupEndTimes(node, map) {
+  if (!node) return
+
+  if (Array.isArray(node)) {
+    for (const item of node) collectPickupEndTimes(item, map)
+    return
+  }
+
+  if (typeof node !== 'object') return
+
+  const obj = node
+  const id =
+    maybeContentId(obj.content_id) ||
+    maybeContentId(obj.contentId) ||
+    maybeContentId(obj.review_content_id) ||
+    0
+
+  let endText = ''
+  const keyPriority = [
+    'end_time',
+    'endTime',
+    'deadline',
+    'down_time',
+    'over_time',
+    '结束时间',
+    '结束日期'
+  ]
+
+  for (const key of keyPriority) {
+    if (obj[key] != null) {
+      endText = extractDateLike(String(obj[key]))
+      if (endText) break
+    }
+  }
+
+  if (!endText) {
+    for (const [k, v] of Object.entries(obj)) {
+      if (v == null) continue
+      if (!/(end|截止|结束|deadline|down|over)/i.test(k)) continue
+      endText = extractDateLike(String(v))
+      if (endText) break
+    }
+  }
+
+  if (id && endText) {
+    const existing = map.get(id) || ''
+    map.set(id, pickBetterEndTime(existing, endText))
+  }
+
+  for (const value of Object.values(obj)) {
+    if (typeof value === 'object' && value !== null) {
+      collectPickupEndTimes(value, map)
+    }
+  }
+}
+
+function collectPickupEndTimesFromHtml(html = '', map = new Map()) {
+  if (!html) return map
+
+  const anchorRe = /<a[^>]+href="([^"]*\/zsca2\/tj\/(\d+)\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/g
+  let match
+
+  while ((match = anchorRe.exec(html)) !== null) {
+    const contentId = maybeContentId(match[2])
+    if (!contentId) continue
+
+    const left = Math.max(0, match.index - 360)
+    const right = Math.min(html.length, anchorRe.lastIndex + 520)
+    const nearby = html.slice(left, right)
+    let endText = extractUpEndTime(nearby)
+    if (!endText || isExpiredEndTime(endText)) {
+      endText = extractRemainingDays(nearby)
+    }
+    if (!endText || isExpiredEndTime(endText)) continue
+
+    const existing = map.get(contentId) || ''
+    map.set(contentId, pickBetterEndTime(existing, endText))
+  }
+
+  return map
+}
+
+function extractUpItemsFromHtml(source = '') {
+  const anchorRe = /<a[^>]+href="([^"]*\/zsca2\/tj\/(\d+)\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/g
+  const seen = new Set()
+  const items = []
+  let match
+
+  while ((match = anchorRe.exec(source)) !== null) {
+    const href = ensureAbsoluteUrl(match[1])
+    const contentId = maybeContentId(match[2])
+    const rawAnchorText = stripHtmlTags(match[3])
+    const title = rawAnchorText
+      .replace(/(?:截止|截至|结束(?:于|时间)?|到期).*/i, '')
+      .replace(/\d+\s*天/g, '')
+      .trim() || rawAnchorText
+    if (!href || !contentId || !title || seen.has(href)) continue
+
+    const left = Math.max(0, match.index - 360)
+    const right = Math.min(source.length, anchorRe.lastIndex + 520)
+    const nearby = source.slice(left, right)
+    let endTime = extractUpEndTime(nearby)
+    if (isExpiredEndTime(endTime)) {
+      endTime = ''
+    }
+    if (!endTime) {
+      const nearbyDate = extractUpEndTime(nearby)
+      if (nearbyDate && !isExpiredEndTime(nearbyDate)) {
+        endTime = nearbyDate
+      } else {
+        endTime = extractRemainingDays(nearby)
+      }
+    }
+
+    seen.add(href)
+    const styleIndex = Number(href.match(/[?&]style=style(\d+)/)?.[1] || 1)
+    items.push({
+      title,
+      href,
+      contentId,
+      styleIndex,
+      endTime
+    })
+  }
+
+  return items
+}
+
+async function fetchPickupEndTimeMap(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && pickupEndTimeCache.byContentId.size > 0 && now < pickupEndTimeCache.expiresAt) {
+    return pickupEndTimeCache.byContentId
+  }
+
+  const html = await fetchText(PICKUP_URL)
+  const statePathMatch = html.match(STATE_PATH_RE)
+  if (!statePathMatch) {
+    pickupEndTimeCache = {
+      byContentId: new Map(),
+      expiresAt: now + UP_CACHE_TTL_MS
+    }
+    return pickupEndTimeCache.byContentId
+  }
+
+  const stateUrl = ensureAbsoluteUrl(statePathMatch[0])
+  const stateText = await fetchText(stateUrl)
+  const stateJson = JSON.parse(stateText.replace(/^window\.__INITIAL_STATE__\s*=\s*/, ''))
+  const map = collectPickupEndTimesFromHtml(html, new Map())
+
+  collectPickupEndTimes(stateJson?.ssrComponentData || [], map)
+
+  pickupEndTimeCache = {
+    byContentId: map,
+    expiresAt: now + UP_CACHE_TTL_MS
+  }
+  return pickupEndTimeCache.byContentId
 }
 
 function buildReviewStyles(detail) {
@@ -268,6 +571,101 @@ export async function getRoleIndex(forceRefresh = false) {
   }
 
   return roleCache
+}
+
+export async function getRoleByContentId(contentId) {
+  if (!contentId) return null
+  const { roles } = await getRoleIndex(false)
+  return roles.find((role) => String(role?.contentId) === String(contentId)) || null
+}
+
+async function fetchRosterEndTimeMap(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && rosterEndTimeCache.byContentId.size > 0 && now < rosterEndTimeCache.expiresAt) {
+    return rosterEndTimeCache.byContentId
+  }
+
+  const data = await fetchJson(BDROSTER_ROLE_URL, {
+    'game-alias': 'zsca2',
+    Lang: 'zh-cn',
+    'device-num': '1'
+  })
+  const groups = Array.isArray(data?.data?.role) ? data.data.role : []
+  const map = new Map()
+
+  for (const group of groups) {
+    const children = Array.isArray(group?.children) ? group.children : []
+    for (const child of children) {
+      const contentId = maybeContentId(child?.content_id)
+      if (!contentId) continue
+      const endText = formatEndAt(child?.end_at)
+      if (!endText || isExpiredEndTime(endText)) continue
+      const existing = map.get(contentId) || ''
+      map.set(contentId, pickBetterEndTime(existing, endText))
+    }
+  }
+
+  rosterEndTimeCache = {
+    byContentId: map,
+    expiresAt: now + UP_CACHE_TTL_MS
+  }
+  return rosterEndTimeCache.byContentId
+}
+
+export async function fetchCurrentUpReviews(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && currentUpCache.items.length > 0 && now < currentUpCache.expiresAt) {
+    return currentUpCache.items
+  }
+
+  let items = []
+  try {
+    const pickupHtml = await fetchText(PICKUP_URL)
+    items = extractUpItemsFromHtml(pickupHtml)
+  } catch {
+    // fallback to HOME page below
+  }
+
+  if (items.length === 0) {
+    const homeHtml = await fetchText(HOME_URL)
+    const section =
+      homeHtml.match(/当前UP评测([\s\S]*?)当前版本攻略/)?.[1] ||
+      homeHtml.match(/当前UP评测([\s\S]*?)服装测评/)?.[1] ||
+      ''
+    items = extractUpItemsFromHtml(section || homeHtml)
+  }
+
+  try {
+    const endTimeMap = await fetchPickupEndTimeMap(forceRefresh)
+    for (const item of items) {
+      if (endTimeMap.has(item.contentId)) {
+        const candidate = endTimeMap.get(item.contentId) || ''
+        if (!candidate || isExpiredEndTime(candidate)) continue
+        item.endTime = pickBetterEndTime(item.endTime || '', candidate)
+      }
+    }
+  } catch {
+    // fallback to title-regex extracted endTime only
+  }
+
+  try {
+    const apiEndTimeMap = await fetchRosterEndTimeMap(forceRefresh)
+    for (const item of items) {
+      if (!apiEndTimeMap.has(item.contentId)) continue
+      const candidate = apiEndTimeMap.get(item.contentId) || ''
+      if (!candidate || isExpiredEndTime(candidate)) continue
+      item.endTime = pickBetterEndTime(item.endTime || '', candidate)
+    }
+  } catch {
+    // fallback to previous source only
+  }
+
+  currentUpCache = {
+    items,
+    expiresAt: now + UP_CACHE_TTL_MS
+  }
+
+  return items
 }
 
 export async function searchRolesByName(keyword) {
