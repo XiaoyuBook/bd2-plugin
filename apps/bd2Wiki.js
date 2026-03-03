@@ -4,6 +4,7 @@ import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import plugin from '../../../lib/plugins/plugin.js'
 import { getRoleReviewByContentId, searchRolesByName } from '../model/gamekeeRoleService.js'
+import { updateAtlasImageCache } from '../model/atlasImageCache.js'
 import { renderReviewCard } from '../model/reviewCardRender.js'
 
 const execAsync = promisify(exec)
@@ -15,6 +16,7 @@ const HELP_TEXT = [
   '#bd2 角色 <角色名> / bd2 角色 <角色名>  与搜索等价',
   '#bd2 测评 <角色名> [皮肤序号] / bd2 测评 <角色名> [皮肤序号]',
   '#bd2更新  拉取当前分支最新代码（仅主人）',
+  '#bd2图鉴更新 / #bd2 图鉴更新  更新本地皮肤头像缓存（仅主人）',
   '#bd2 帮助 / bd2 帮助'
 ].join('\n')
 
@@ -182,6 +184,33 @@ export class Bd2Wiki extends plugin {
     }
   }
 
+  async updateAtlas(e) {
+    if (!e.isMaster) {
+      await this.reply('仅Bot主人可执行 #bd2图鉴更新。')
+      return true
+    }
+
+    await this.reply('开始更新本地图鉴头像缓存，请稍候...')
+
+    try {
+      const stat = await updateAtlasImageCache(false)
+      await this.reply(
+        [
+          '图鉴头像缓存更新完成。',
+          `总计：${stat.total}`,
+          `新增下载：${stat.downloaded}`,
+          `已存在跳过：${stat.skipped}`,
+          `失败：${stat.failed}`
+        ].join('\n')
+      )
+      return true
+    } catch (error) {
+      logger.error('[bd2-plugin] atlas update failed', error)
+      await this.reply(`图鉴更新失败：${error.message || error}`)
+      return true
+    }
+  }
+
   async handleCommand(e) {
     const msg = String(e.msg || '').trim()
 
@@ -191,6 +220,10 @@ export class Bd2Wiki extends plugin {
 
     if (/^#bd2更新$/.test(msg)) {
       return this.updatePlugin(e)
+    }
+
+    if (/^#bd2\s*图鉴更新$/.test(msg)) {
+      return this.updateAtlas(e)
     }
 
     const reviewMatch = msg.match(/^#?bd2\s*测评\s*(.+)$/)

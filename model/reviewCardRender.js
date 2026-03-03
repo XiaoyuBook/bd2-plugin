@@ -1,3 +1,4 @@
+import { toRenderableImageSrc } from './atlasImageCache.js'
 const DEFAULT_WIDTH = 1080
 const DEFAULT_HEIGHT = 1520
 
@@ -6,7 +7,7 @@ function escapeHtml(value = '') {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/\"/g, '&quot;')
+    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
 }
 
@@ -69,32 +70,6 @@ function buildHtml(data) {
     display: flex;
     align-items: center;
     gap: 24px;
-    min-height: 168px;
-  }
-  .level-corner {
-    position: absolute;
-    top: 4px;
-    right: 0;
-    padding: 10px 14px;
-    border-radius: 12px;
-    border: 1px solid rgba(255,120,120,.6);
-    background: linear-gradient(135deg, rgba(130,22,22,.88), rgba(198,34,34,.9));
-    box-shadow: 0 8px 18px rgba(0,0,0,.35);
-    text-align: center;
-    min-width: 132px;
-  }
-  .level-corner .k {
-    font-size: 15px;
-    color: rgba(255,235,235,.9);
-    line-height: 1;
-  }
-  .level-corner .v {
-    margin-top: 6px;
-    font-size: 34px;
-    font-weight: 800;
-    color: #ff5c57;
-    line-height: 1;
-    text-shadow: 0 3px 10px rgba(0,0,0,.45);
   }
   .avatar {
     width: 168px;
@@ -104,10 +79,7 @@ function buildHtml(data) {
     object-fit: cover;
     background: rgba(255,255,255,.08);
   }
-  .title-wrap {
-    flex: 1;
-    padding-right: 160px;
-  }
+  .title-wrap { flex: 1; }
   .title {
     font-size: 44px;
     font-weight: 700;
@@ -119,6 +91,30 @@ function buildHtml(data) {
     margin-top: 10px;
     font-size: 22px;
     color: #f9ddb5;
+  }
+  .level-corner {
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 9px 14px 10px;
+    border-radius: 12px;
+    background: rgba(72,12,8,.78);
+    border: 1px solid rgba(255,130,110,.75);
+    text-align: right;
+    box-shadow: 0 5px 16px rgba(0,0,0,.28);
+  }
+  .level-k {
+    font-size: 16px;
+    color: #ffc2b7;
+    line-height: 1;
+  }
+  .level-v {
+    margin-top: 8px;
+    font-size: 34px;
+    line-height: 1;
+    font-weight: 800;
+    color: #ff4a3c;
+    text-shadow: 0 3px 10px rgba(90,0,0,.45);
   }
   .chips {
     margin-top: 26px;
@@ -203,8 +199,8 @@ function buildHtml(data) {
           <div class="sub">皮肤测评卡</div>
         </div>
         <div class="level-corner">
-          <div class="k">皮肤强度</div>
-          <div class="v">${escapeHtml(level || '未知')}</div>
+          <div class="level-k">皮肤强度</div>
+          <div class="level-v">${escapeHtml(level || '未知')}</div>
         </div>
       </div>
 
@@ -249,6 +245,7 @@ async function getPuppeteer() {
 
 export async function renderReviewCard(data) {
   try {
+    const roleIcon = await toRenderableImageSrc(data?.roleIcon || '')
     const puppeteer = await getPuppeteer()
     const browser = await puppeteer.launch({
       headless: 'new',
@@ -258,7 +255,7 @@ export async function renderReviewCard(data) {
     try {
       const page = await browser.newPage()
       await page.setViewport({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, deviceScaleFactor: 1 })
-      await page.setContent(buildHtml(data), { waitUntil: 'networkidle0', timeout: 30000 })
+      await page.setContent(buildHtml({ ...data, roleIcon }), { waitUntil: 'networkidle0', timeout: 30000 })
       const buffer = await page.screenshot({ type: 'png' })
       await page.close()
       return buffer

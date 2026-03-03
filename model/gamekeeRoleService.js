@@ -16,6 +16,15 @@ function normalizeText(text = '') {
   return String(text).trim().toLowerCase().replace(/\s+/g, '')
 }
 
+function cleanMarkupText(text = '') {
+  return String(text)
+    .replace(/\*{3}[^\s*]+/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function ensureAbsoluteUrl(url = '') {
   if (!url) return ''
   if (url.startsWith('http://') || url.startsWith('https://')) return url
@@ -115,9 +124,9 @@ async function fetchRemoteRoles() {
 }
 
 function getLocalizedText(value, locale = 'zh-cn') {
-  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'string') return cleanMarkupText(value)
   if (!value || typeof value !== 'object') return ''
-  return String(value[locale] || value['zh-hk'] || value.en || '').trim()
+  return cleanMarkupText(value[locale] || value['zh-hk'] || value.en || '')
 }
 
 function buildReviewStyles(detail) {
