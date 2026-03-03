@@ -1,8 +1,10 @@
 const ROLE_ATLAS_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=jstj'
+const HOME_URL = 'https://www.gamekee.com/zsca2/'
 const STATE_PATH_RE = /ssr-vuex-store-state\.js\?cacheKey=[^"']+/
 const ROLE_PAGE_COMPONENT = 'pageTjRole'
 const REVIEW_PAGE_COMPONENT = 'PageDetailZSTJ'
 const CACHE_TTL_MS = 30 * 60 * 1000
+const UP_CACHE_TTL_MS = 10 * 60 * 1000
 
 let roleCache = {
   expiresAt: 0,
@@ -11,6 +13,10 @@ let roleCache = {
 }
 
 const reviewCache = new Map()
+let currentUpCache = {
+  expiresAt: 0,
+  items: []
+}
 
 function normalizeText(text = '') {
   return String(text).trim().toLowerCase().replace(/\s+/g, '')
@@ -146,6 +152,14 @@ function getLocalizedRawText(value, locale = 'zh-cn') {
   return String(value[locale] || value['zh-hk'] || value.en || '').trim()
 }
 
+function stripHtmlTags(text = '') {
+  return String(text)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function buildReviewStyles(detail) {
   const eqRaw = detail?.content_tj_eq?.content
   const eq = typeof eqRaw === 'string' ? JSON.parse(eqRaw || '{}') : {}
@@ -268,6 +282,54 @@ export async function getRoleIndex(forceRefresh = false) {
   }
 
   return roleCache
+}
+
+export async function getRoleByContentId(contentId) {
+  if (!contentId) return null
+  const { roles } = await getRoleIndex(false)
+  return roles.find((role) => String(role?.contentId) === String(contentId)) || null
+}
+
+export async function fetchCurrentUpReviews(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && currentUpCache.items.length > 0 && now < currentUpCache.expiresAt) {
+    return currentUpCache.items
+  }
+
+  const homeHtml = await fetchText(HOME_URL)
+  const section =
+    homeHtml.match(/当前UP评测([\s\S]*?)当前版本攻略/)?.[1] ||
+    homeHtml.match(/当前UP评测([\s\S]*?)服装测评/)?.[1] ||
+    ''
+
+  const source = section || homeHtml
+  const anchorRe = /<a[^>]+href="([^"]*\/zsca2\/tj\/(\d+)\.html[^"]*)"[^>]*>([\s\S]*?)<\/a>/g
+  const seen = new Set()
+  const items = []
+  let match
+
+  while ((match = anchorRe.exec(source)) !== null) {
+    const href = ensureAbsoluteUrl(match[1])
+    const contentId = Number(match[2])
+    const title = stripHtmlTags(match[3])
+    if (!href || !contentId || !title || seen.has(href)) continue
+
+    seen.add(href)
+    const styleIndex = Number(href.match(/[?&]style=style(\d+)/)?.[1] || 1)
+    items.push({
+      title,
+      href,
+      contentId,
+      styleIndex
+    })
+  }
+
+  currentUpCache = {
+    items,
+    expiresAt: now + UP_CACHE_TTL_MS
+  }
+
+  return items
 }
 
 export async function searchRolesByName(keyword) {
