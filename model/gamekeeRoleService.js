@@ -18,11 +18,18 @@ function normalizeText(text = '') {
 
 function cleanMarkupText(text = '') {
   return String(text)
+    // Normalize variant: ***orange***文本*** -> ***orange 文本***
+    .replace(/\*{3}([a-zA-Z]+)\*{3}([\s\S]*?)\*{3}/g, '***$1 $2***')
     // GameKee color marker like ***orange 文本*** / ***orange文本***
-    .replace(/\*{3}[a-zA-Z]+(?:\s+)?([\s\S]*?)\*{3}/g, '$1')
+    .replace(/\*{3}[a-zA-Z]+(?:\s+)?([\s\S]*?)\*{3}/g, (_, inner) =>
+      String(inner || '').replace(/^[：:]\s*/, '')
+    )
+    // Bold marker: **文本**
+    .replace(/\*{2}([\s\S]*?)\*{2}/g, '$1')
     // Fallback: remove unmatched color prefix / trailing marker only.
     .replace(/\*{3}[a-zA-Z]+/g, ' ')
     .replace(/\*{3}/g, ' ')
+    .replace(/\*{2}/g, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/\s+/g, ' ')
