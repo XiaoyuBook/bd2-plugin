@@ -133,6 +133,12 @@ function getLocalizedText(value, locale = 'zh-cn') {
   return cleanMarkupText(value[locale] || value['zh-hk'] || value.en || '')
 }
 
+function getLocalizedRawText(value, locale = 'zh-cn') {
+  if (typeof value === 'string') return String(value).trim()
+  if (!value || typeof value !== 'object') return ''
+  return String(value[locale] || value['zh-hk'] || value.en || '').trim()
+}
+
 function buildReviewStyles(detail) {
   const eqRaw = detail?.content_tj_eq?.content
   const eq = typeof eqRaw === 'string' ? JSON.parse(eqRaw || '{}') : {}
@@ -142,6 +148,11 @@ function buildReviewStyles(detail) {
   for (const key of styleKeys) {
     const index = Number(key.replace('style', ''))
     const style = eq[key] || {}
+    const mustTakeRaw = getLocalizedRawText(style.must_take)
+    const mustTakeValueRaw = getLocalizedRawText(style.must_take_value)
+    const adviceRaw = getLocalizedRawText(style.adviceValue)
+    const strengthRaw = getLocalizedRawText(style.strenthValue)
+    const environmentRaw = getLocalizedRawText(style.environmentValue)
     const mustTake = getLocalizedText(style.must_take)
     const mustTakeValue = getLocalizedText(style.must_take_value)
     const advice = getLocalizedText(style.adviceValue)
@@ -163,9 +174,14 @@ function buildReviewStyles(detail) {
       level,
       mustTake,
       mustTakeValue,
+      mustTakeRaw,
+      mustTakeValueRaw,
       advice,
+      adviceRaw,
       strength,
+      strengthRaw,
       environment,
+      environmentRaw,
       banner,
       scene: {
         gjlLabel,
