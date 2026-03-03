@@ -249,7 +249,7 @@ export class Bd2Wiki extends plugin {
       priority: 5000,
       task: [
         {
-          cron: '0 0/10 * * * ?',
+          cron: '0 0 * * * ?',
           name: 'bd2-up-push-check',
           fnc: 'checkUpPushTask'
         }
@@ -413,6 +413,16 @@ export class Bd2Wiki extends plugin {
 
       if (!newItems.length) return true
 
+      try {
+        const stat = await updateAtlasImageCache(false)
+        logger.mark(
+          '[bd2-plugin] auto atlas update before up push',
+          `total=${stat.total} downloaded=${stat.downloaded} skipped=${stat.skipped} failed=${stat.failed}`
+        )
+      } catch (error) {
+        logger.warn('[bd2-plugin] auto atlas update failed before up push', error?.message || error)
+      }
+
       const textLines = ['【BD2 当前UP新增推送】']
       for (let i = 0; i < newItems.length; i += 1) {
         const item = newItems[i]
@@ -433,11 +443,52 @@ export class Bd2Wiki extends plugin {
         imageMessage = null
       }
 
+      const detailImageMessages = []
+      for (const item of newItems) {
+        try {
+          const review = await getRoleReviewByContentId(item.contentId)
+          const style = review?.styles?.find((it) => it.index === item.styleIndex) || review?.styles?.[0]
+          if (!style) continue
+
+          const role = await getRoleByContentId(item.contentId)
+          const roleName = role?.name || item.title
+          const skinName = role?.skins?.[style.index - 1]?.name || `皮肤${style.index}`
+          const renderData = {
+            roleName,
+            skinName,
+            roleIcon: role?.skins?.[style.index - 1]?.icon || role?.skins?.[0]?.icon || role?.icon || '',
+            level: style.level || '未知',
+            mustTake: style.mustTake || '抽取建议待补充',
+            mustTakeRaw: style.mustTakeRaw || '',
+            mustTakeValue: style.mustTakeValue || '-',
+            mustTakeValueRaw: style.mustTakeValueRaw || '',
+            scene: style.scene || {},
+            advice: style.advice || '暂无',
+            adviceRaw: style.adviceRaw || '',
+            strength: style.strength || '暂无',
+            strengthRaw: style.strengthRaw || '',
+            environment: style.environment || '暂无',
+            environmentRaw: style.environmentRaw || '',
+            banner: style.banner || ''
+          }
+
+          const detailBuffer = await renderReviewCard(renderData)
+          if (detailBuffer) {
+            detailImageMessages.push(imageSegmentFromBuffer(detailBuffer))
+          }
+        } catch (error) {
+          logger.warn('[bd2-plugin] up push detail render failed', item?.title || item?.contentId, error?.message || error)
+        }
+      }
+
       for (const gid of state.enabledGroups) {
         try {
           await sendGroupPush(gid, textMessage)
           if (imageMessage) {
             await sendGroupPush(gid, imageMessage)
+          }
+          for (const detailImage of detailImageMessages) {
+            await sendGroupPush(gid, detailImage)
           }
         } catch (error) {
           logger.warn('[bd2-plugin] up push failed', gid, error?.message || error)
