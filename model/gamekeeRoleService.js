@@ -1,5 +1,6 @@
 const ROLE_ATLAS_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=jstj'
 const HOME_URL = 'https://www.gamekee.com/zsca2/'
+const PICKUP_URL = 'https://www.gamekee.com/zsca2/jstj/122229?tab=pickUp'
 const STATE_PATH_RE = /ssr-vuex-store-state\.js\?cacheKey=[^"']+/
 const ROLE_PAGE_COMPONENT = 'pageTjRole'
 const REVIEW_PAGE_COMPONENT = 'PageDetailZSTJ'
@@ -16,6 +17,10 @@ const reviewCache = new Map()
 let currentUpCache = {
   expiresAt: 0,
   items: []
+}
+let pickupEndTimeCache = {
+  expiresAt: 0,
+  byContentId: new Map()
 }
 
 function normalizeText(text = '') {
@@ -178,6 +183,114 @@ function extractUpEndTime(text = '') {
   }
 
   return ''
+}
+
+function extractDateLike(text = '') {
+  const normalized = stripHtmlTags(text)
+  if (!normalized) return ''
+
+  const range =
+    normalized.match(/\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*[日]?\s*[-~至到]\s*\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?/) ||
+    normalized.match(/\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?\s*[-~至到]\s*\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?/)
+  if (range?.[0]) return range[0].replace(/\s+/g, '')
+
+  const single =
+    normalized.match(/\d{4}\s*[.-\/年]\s*\d{1,2}\s*[.-\/月]\s*\d{1,2}\s*日?/) ||
+    normalized.match(/\d{1,2}\s*[\/月.-]\s*\d{1,2}\s*日?/)
+  if (single?.[0]) return single[0].replace(/\s+/g, '')
+
+  return ''
+}
+
+function maybeContentId(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return 0
+  return n
+}
+
+function collectPickupEndTimes(node, map) {
+  if (!node) return
+
+  if (Array.isArray(node)) {
+    for (const item of node) collectPickupEndTimes(item, map)
+    return
+  }
+
+  if (typeof node !== 'object') return
+
+  const obj = node
+  const id =
+    maybeContentId(obj.content_id) ||
+    maybeContentId(obj.contentId) ||
+    maybeContentId(obj.review_content_id) ||
+    0
+
+  let endText = ''
+  const keyPriority = [
+    'end_time',
+    'endTime',
+    'deadline',
+    'down_time',
+    'over_time',
+    '结束时间',
+    '结束日期'
+  ]
+
+  for (const key of keyPriority) {
+    if (obj[key] != null) {
+      endText = extractDateLike(String(obj[key]))
+      if (endText) break
+    }
+  }
+
+  if (!endText) {
+    for (const [k, v] of Object.entries(obj)) {
+      if (v == null) continue
+      if (!/(end|截止|结束|deadline|down|over)/i.test(k)) continue
+      endText = extractDateLike(String(v))
+      if (endText) break
+    }
+  }
+
+  if (id && endText && !map.has(id)) {
+    map.set(id, endText)
+  }
+
+  for (const value of Object.values(obj)) {
+    if (typeof value === 'object' && value !== null) {
+      collectPickupEndTimes(value, map)
+    }
+  }
+}
+
+async function fetchPickupEndTimeMap(forceRefresh = false) {
+  const now = Date.now()
+  if (!forceRefresh && pickupEndTimeCache.byContentId.size > 0 && now < pickupEndTimeCache.expiresAt) {
+    return pickupEndTimeCache.byContentId
+  }
+
+  const html = await fetchText(PICKUP_URL)
+  const statePathMatch = html.match(STATE_PATH_RE)
+  if (!statePathMatch) {
+    pickupEndTimeCache = {
+      byContentId: new Map(),
+      expiresAt: now + UP_CACHE_TTL_MS
+    }
+    return pickupEndTimeCache.byContentId
+  }
+
+  const stateUrl = ensureAbsoluteUrl(statePathMatch[0])
+  const stateText = await fetchText(stateUrl)
+  const stateJson = JSON.parse(stateText.replace(/^window\.__INITIAL_STATE__\s*=\s*/, ''))
+  const map = new Map()
+
+  collectPickupEndTimes(stateJson?.ssrComponentData || [], map)
+
+  pickupEndTimeCache = {
+    byContentId: map,
+    expiresAt: now + UP_CACHE_TTL_MS
+  }
+  return pickupEndTimeCache.byContentId
 }
 
 function buildReviewStyles(detail) {
@@ -345,6 +458,17 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
       styleIndex,
       endTime
     })
+  }
+
+  try {
+    const endTimeMap = await fetchPickupEndTimeMap(forceRefresh)
+    for (const item of items) {
+      if (!item.endTime && endTimeMap.has(item.contentId)) {
+        item.endTime = endTimeMap.get(item.contentId) || ''
+      }
+    }
+  } catch {
+    // fallback to title-regex extracted endTime only
   }
 
   currentUpCache = {
