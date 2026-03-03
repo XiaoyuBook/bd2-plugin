@@ -185,6 +185,13 @@ function extractUpEndTime(text = '') {
   return ''
 }
 
+function extractRemainingDays(text = '') {
+  const normalized = stripHtmlTags(text)
+  const m = normalized.match(/(\d+)\s*天/)
+  if (!m?.[1]) return ''
+  return `剩余${m[1]}天`
+}
+
 function extractDateLike(text = '') {
   const normalized = stripHtmlTags(text)
   if (!normalized) return ''
@@ -225,6 +232,12 @@ function parseDateToTs(text = '') {
   }
 
   return 0
+}
+
+function isExpiredEndTime(text = '') {
+  const ts = parseDateToTs(text)
+  if (!ts) return false
+  return ts < Date.now() - 7 * 24 * 60 * 60 * 1000
 }
 
 function pickBetterEndTime(prev = '', next = '') {
@@ -492,12 +505,20 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
       .replace(/\d+\s*天/g, '')
       .trim() || rawAnchorText
     let endTime = extractUpEndTime(rawAnchorText)
+    if (isExpiredEndTime(endTime)) {
+      endTime = ''
+    }
     if (!endTime) {
       // Fallback: time text may sit outside <a>, extract from nearby snippet.
       const left = Math.max(0, match.index - 220)
       const right = Math.min(source.length, anchorRe.lastIndex + 320)
       const nearby = source.slice(left, right)
-      endTime = extractUpEndTime(nearby)
+      const nearbyDate = extractUpEndTime(nearby)
+      if (nearbyDate && !isExpiredEndTime(nearbyDate)) {
+        endTime = nearbyDate
+      } else {
+        endTime = extractRemainingDays(nearby)
+      }
     }
     if (!href || !contentId || !title || seen.has(href)) continue
 
@@ -516,7 +537,9 @@ export async function fetchCurrentUpReviews(forceRefresh = false) {
     const endTimeMap = await fetchPickupEndTimeMap(forceRefresh)
     for (const item of items) {
       if (endTimeMap.has(item.contentId)) {
-        item.endTime = pickBetterEndTime(item.endTime || '', endTimeMap.get(item.contentId) || '')
+        const candidate = endTimeMap.get(item.contentId) || ''
+        if (!candidate || isExpiredEndTime(candidate)) continue
+        item.endTime = pickBetterEndTime(item.endTime || '', candidate)
       }
     }
   } catch {
