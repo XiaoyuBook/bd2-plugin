@@ -11,6 +11,7 @@ import {
 } from '../model/gamekeeRoleService.js'
 import { updateAtlasImageCache } from '../model/atlasImageCache.js'
 import { renderReviewCard } from '../model/reviewCardRender.js'
+import { renderUpListCard } from '../model/upListRender.js'
 
 const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -261,6 +262,24 @@ export class Bd2Wiki extends plugin {
       try {
         const upItems = await fetchCurrentUpReviews(false)
         if (!pickedIndex) {
+          const upItemsWithAvatar = await Promise.all(
+            upItems.map(async (item) => {
+              try {
+                const role = await getRoleByContentId(item.contentId)
+                const skinIndex = Number(item.styleIndex || 1) - 1
+                const avatar = role?.skins?.[skinIndex]?.icon || role?.skins?.[0]?.icon || role?.icon || ''
+                return { ...item, avatar }
+              } catch {
+                return { ...item, avatar: '' }
+              }
+            })
+          )
+
+          const listImageBuffer = await renderUpListCard(upItemsWithAvatar)
+          if (listImageBuffer) {
+            await replyImage(e, listImageBuffer)
+            return true
+          }
           await this.reply(formatCurrentUpList(upItems))
           return true
         }
