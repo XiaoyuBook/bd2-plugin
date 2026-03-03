@@ -11,6 +11,47 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;')
 }
 
+function colorClass(color = '') {
+  const name = String(color || '').toLowerCase()
+  const map = {
+    orange: 'mk-orange',
+    red: 'mk-red',
+    yellow: 'mk-yellow',
+    green: 'mk-green',
+    blue: 'mk-blue'
+  }
+  return map[name] || ''
+}
+
+function renderMarkedText(raw = '', fallback = '') {
+  const input = String(raw || fallback || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+
+  const pattern = /\*{3}([a-zA-Z]+)(?:\s+)?([\s\S]*?)\*{3}/g
+  let lastIndex = 0
+  let result = ''
+  let match
+
+  while ((match = pattern.exec(input)) !== null) {
+    result += escapeHtml(input.slice(lastIndex, match.index))
+
+    const cls = colorClass(match[1])
+    const inner = escapeHtml(match[2] || '')
+    result += cls ? `<span class="${cls}">${inner}</span>` : inner
+    lastIndex = pattern.lastIndex
+  }
+
+  result += escapeHtml(input.slice(lastIndex))
+  result = result
+    .replace(/\*{3}[a-zA-Z]+/g, '')
+    .replace(/\*{3}/g, '')
+    .replace(/\n/g, '<br/>')
+
+  return result.trim()
+}
+
 function buildHtml(data) {
   const {
     roleName,
@@ -18,11 +59,16 @@ function buildHtml(data) {
     roleIcon,
     level,
     mustTake,
+    mustTakeRaw,
     mustTakeValue,
+    mustTakeValueRaw,
     scene,
     advice,
+    adviceRaw,
     strength,
+    strengthRaw,
     environment,
+    environmentRaw,
     banner
   } = data
 
@@ -179,6 +225,11 @@ function buildHtml(data) {
     white-space: pre-wrap;
     word-break: break-word;
   }
+  .mk-orange { color: #ffb347; font-weight: 700; }
+  .mk-red { color: #ff6b6b; font-weight: 700; }
+  .mk-yellow { color: #ffe082; font-weight: 700; }
+  .mk-green { color: #8ce99a; font-weight: 700; }
+  .mk-blue { color: #82cfff; font-weight: 700; }
   .footer {
     margin-top: 14px;
     font-size: 16px;
@@ -205,8 +256,8 @@ function buildHtml(data) {
       </div>
 
       <div class="chips">
-        <div class="chip chip-main">${escapeHtml(mustTake || '抽取建议待补充')}</div>
-        <div class="chip chip-sub">${escapeHtml(mustTakeValue || '-')}</div>
+        <div class="chip chip-main">${renderMarkedText(mustTakeRaw, mustTake || '抽取建议待补充')}</div>
+        <div class="chip chip-sub">${renderMarkedText(mustTakeValueRaw, mustTakeValue || '-')}</div>
       </div>
 
       <div class="score-row">
@@ -218,17 +269,17 @@ function buildHtml(data) {
 
       <div class="section">
         <h3>抽取建议</h3>
-        <p>${escapeHtml(advice || '暂无')}</p>
+        <p>${renderMarkedText(adviceRaw, advice || '暂无')}</p>
       </div>
 
       <div class="section">
         <h3>强度分析</h3>
-        <p>${escapeHtml(strength || '暂无')}</p>
+        <p>${renderMarkedText(strengthRaw, strength || '暂无')}</p>
       </div>
 
       <div class="section">
         <h3>环境分析</h3>
-        <p>${escapeHtml(environment || '暂无')}</p>
+        <p>${renderMarkedText(environmentRaw, environment || '暂无')}</p>
       </div>
 
       <div class="footer">数据来源：GameKee · 自动生成</div>
