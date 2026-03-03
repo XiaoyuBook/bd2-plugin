@@ -370,7 +370,7 @@ export class Bd2Wiki extends plugin {
         const renderData = {
           roleName: role.name,
           skinName: skinName || `皮肤${style.index}`,
-          roleIcon: role.skins?.[style.index - 1]?.icon || role.skins?.[0]?.icon || role.icon || '',
+          roleIcon: role.icon || role.skins?.[style.index - 1]?.icon || role.skins?.[0]?.icon || '',
           level: style.level || '未知',
           mustTake: style.mustTake || '抽取建议待补充',
           mustTakeRaw: style.mustTakeRaw || '',
