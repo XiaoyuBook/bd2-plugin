@@ -1,5 +1,12 @@
+import path from 'node:path'
+import fs from 'node:fs/promises'
+import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+
 const CARD_WIDTH = 1080
 const CARD_HEIGHT = 1500
+const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const DATA_DIR = path.join(PLUGIN_DIR, 'data')
 
 function escapeHtml(value = '') {
   return String(value)
@@ -163,8 +170,31 @@ async function getPuppeteer() {
   return pkg?.default || pkg
 }
 
+function getCachePathByHtml(html) {
+  const hash = crypto.createHash('sha256').update(html).digest('hex').slice(0, 16)
+  return path.join(DATA_DIR, `help-card-${hash}.png`)
+}
+
+async function readCache(pathname) {
+  try {
+    return await fs.readFile(pathname)
+  } catch {
+    return null
+  }
+}
+
+async function writeCache(pathname, buffer) {
+  await fs.mkdir(DATA_DIR, { recursive: true })
+  await fs.writeFile(pathname, buffer)
+}
+
 export async function renderHelpCard() {
   try {
+    const html = buildHtml()
+    const cachePath = getCachePathByHtml(html)
+    const cached = await readCache(cachePath)
+    if (cached) return cached
+
     const puppeteer = await getPuppeteer()
     const browser = await puppeteer.launch({
       headless: 'new',
@@ -174,9 +204,10 @@ export async function renderHelpCard() {
     try {
       const page = await browser.newPage()
       await page.setViewport({ width: CARD_WIDTH, height: CARD_HEIGHT, deviceScaleFactor: 1 })
-      await page.setContent(buildHtml(), { waitUntil: 'networkidle0', timeout: 30000 })
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 })
       const buffer = await page.screenshot({ type: 'png', fullPage: true })
       await page.close()
+      await writeCache(cachePath, buffer)
       return buffer
     } finally {
       await browser.close()
