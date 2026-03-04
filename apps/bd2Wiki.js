@@ -13,6 +13,7 @@ import {
 import { updateAtlasImageCache } from '../model/atlasImageCache.js'
 import { renderReviewCard } from '../model/reviewCardRender.js'
 import { renderUpListCard } from '../model/upListRender.js'
+import { renderHelpCard } from '../model/helpCardRender.js'
 
 const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -264,6 +265,16 @@ export class Bd2Wiki extends plugin {
   }
 
   async help() {
+    try {
+      const imageBuffer = await renderHelpCard()
+      if (imageBuffer) {
+        await this.reply(imageSegmentFromBuffer(imageBuffer))
+        return true
+      }
+    } catch (error) {
+      logger.warn('[bd2-plugin] help card render failed', error?.message || error)
+    }
+
     await this.reply(HELP_TEXT)
     return true
   }
