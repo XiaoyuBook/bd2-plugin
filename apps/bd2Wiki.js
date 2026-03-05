@@ -301,7 +301,7 @@ export class Bd2Wiki extends plugin {
       priority: 5000,
       task: [
         {
-          cron: '0 0 * * * ?',
+          cron: '0 0 * * * *',
           name: 'bd2-up-push-check',
           fnc: 'checkUpPushTask'
         }
@@ -477,6 +477,20 @@ export class Bd2Wiki extends plugin {
     return true
   }
 
+  async runUpPushCheckNow(e) {
+    if (!e.isMaster) {
+      await writeOpLog(`push-check-now denied user=${e.user_id || 0}`)
+      await this.reply('仅Bot主人可执行 #bd2推送检查。')
+      return true
+    }
+    await writeOpLog('push-check-now start')
+    await this.reply('开始执行一次UP推送检查，请稍候...')
+    await this.checkUpPushTask()
+    await writeOpLog('push-check-now done')
+    await this.reply('UP推送检查执行完成，请查看日志与状态文件。')
+    return true
+  }
+
   async checkUpPushTask() {
     try {
       const state = await loadPushState()
@@ -636,6 +650,10 @@ export class Bd2Wiki extends plugin {
 
     if (/^#bd2\s*推送状态$/.test(msg)) {
       return this.showUpPushStatus(e)
+    }
+
+    if (/^#bd2\s*推送检查$/.test(msg)) {
+      return this.runUpPushCheckNow(e)
     }
 
     const upListMatch = msg.match(/^#?bd2\s*当前\s*up测评(?:\s*(\d+))?$/i)
