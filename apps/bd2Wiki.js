@@ -299,13 +299,11 @@ export class Bd2Wiki extends plugin {
       dsc: 'BD2 角色与皮肤查询',
       event: 'message',
       priority: 5000,
-      task: [
-        {
-          cron: '0 0 * * * *',
-          name: 'bd2-up-push-check',
-          fnc: 'checkUpPushTask'
-        }
-      ],
+      task: {
+        cron: '0 0 * * * ?',
+        name: 'bd2-up-push-check',
+        fnc: 'checkUpPushTask'
+      },
       rule: [
         {
           reg: '^#?bd2',
