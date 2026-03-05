@@ -313,6 +313,15 @@ export class Bd2Wiki extends plugin {
         }
       ]
     })
+
+    // Fallback timer: if host scheduler does not fire cron reliably, keep hourly auto-check alive.
+    if (!this._fallbackTimer) {
+      this._fallbackTimer = setInterval(() => {
+        this.checkUpPushTask('fallback').catch((error) => {
+          logger.warn('[bd2-plugin] fallback push task failed', error?.message || error)
+        })
+      }, 60 * 60 * 1000)
+    }
   }
 
   async help() {
@@ -485,22 +494,22 @@ export class Bd2Wiki extends plugin {
     }
     await writeOpLog('push-check-now start')
     await this.reply('开始执行一次UP推送检查，请稍候...')
-    await this.checkUpPushTask()
+    await this.checkUpPushTask('manual')
     await writeOpLog('push-check-now done')
     await this.reply('UP推送检查执行完成，请查看日志与状态文件。')
     return true
   }
 
-  async checkUpPushTask() {
+  async checkUpPushTask(source = 'cron') {
     try {
       const state = await loadPushState()
       if (!state.enabledGroups.length) return true
 
       logger.mark(
         '[bd2-plugin] up push task tick',
-        `enabledGroups=${state.enabledGroups.length}`
+        `enabledGroups=${state.enabledGroups.length} source=${source}`
       )
-      await writeOpLog(`task-tick enabledGroups=${state.enabledGroups.length}`)
+      await writeOpLog(`task-tick enabledGroups=${state.enabledGroups.length} source=${source}`)
 
       const upItems = await fetchCurrentUpReviews(false)
       const currentKeys = upItems.map((item) => upItemKey(item))
