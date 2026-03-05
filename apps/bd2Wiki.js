@@ -19,6 +19,8 @@ const execAsync = promisify(exec)
 const PLUGIN_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const DATA_DIR = path.join(PLUGIN_DIR, 'data')
 const PUSH_STATE_FILE = path.join(DATA_DIR, 'up-push-state.json')
+const LOG_DIR = path.join(DATA_DIR, 'logs')
+const LOG_FILE_PREFIX = 'bd2-ops-'
 
 const HELP_TEXT = [
   '【BD2 Wiki 插件帮助】',
@@ -42,6 +44,55 @@ function upItemKey(item) {
 
 async function ensureDataDir() {
   await fs.mkdir(DATA_DIR, { recursive: true })
+}
+
+function twoDigits(num) {
+  return String(num).padStart(2, '0')
+}
+
+function dateStamp(date = new Date()) {
+  const y = date.getFullYear()
+  const m = twoDigits(date.getMonth() + 1)
+  const d = twoDigits(date.getDate())
+  return `${y}-${m}-${d}`
+}
+
+function timeStamp(date = new Date()) {
+  const h = twoDigits(date.getHours())
+  const m = twoDigits(date.getMinutes())
+  const s = twoDigits(date.getSeconds())
+  return `${h}:${m}:${s}`
+}
+
+async function cleanupOldOpLogs() {
+  try {
+    await fs.mkdir(LOG_DIR, { recursive: true })
+    const files = await fs.readdir(LOG_DIR)
+    const targets = files
+      .filter((name) => name.startsWith(LOG_FILE_PREFIX) && name.endsWith('.log'))
+      .sort()
+
+    if (targets.length <= 3) return
+
+    const removeList = targets.slice(0, targets.length - 3)
+    await Promise.all(removeList.map((name) => fs.unlink(path.join(LOG_DIR, name)).catch(() => null)))
+  } catch {
+    // keep silent: file logging should never break plugin flow
+  }
+}
+
+async function writeOpLog(message = '') {
+  try {
+    const now = new Date()
+    const day = dateStamp(now)
+    const line = `[${day} ${timeStamp(now)}] ${message}\n`
+    await fs.mkdir(LOG_DIR, { recursive: true })
+    const filePath = path.join(LOG_DIR, `${LOG_FILE_PREFIX}${day}.log`)
+    await fs.appendFile(filePath, line, 'utf8')
+    await cleanupOldOpLogs()
+  } catch {
+    // keep silent: file logging should never break plugin flow
+  }
 }
 
 async function loadPushState() {
@@ -268,19 +319,23 @@ export class Bd2Wiki extends plugin {
     try {
       const imageBuffer = await renderHelpCard()
       if (imageBuffer) {
+        await writeOpLog('help image')
         await this.reply(imageSegmentFromBuffer(imageBuffer))
         return true
       }
     } catch (error) {
       logger.warn('[bd2-plugin] help card render failed', error?.message || error)
+      await writeOpLog(`help image-failed error=${error?.message || error}`)
     }
 
+    await writeOpLog('help text-fallback')
     await this.reply(HELP_TEXT)
     return true
   }
 
   async updatePlugin(e) {
     if (!e.isMaster) {
+      await writeOpLog(`update denied user=${e.user_id || 0}`)
       await this.reply('仅Bot主人可执行 #bd2更新。')
       return true
     }
@@ -298,13 +353,16 @@ export class Bd2Wiki extends plugin {
       const upToDate = /Already up to date|已经是最新|Already up-to-date/i.test(`${stdout}\n${stderr}`)
 
       if (upToDate) {
+        await writeOpLog('update done up-to-date')
         await this.reply(`bd2-plugin 已是最新版本。\n${summary}`)
       } else {
+        await writeOpLog('update done pulled')
         await this.reply(`bd2-plugin 更新完成，请重启云崽使新代码生效。\n${summary}`)
       }
       return true
     } catch (error) {
       logger.error('[bd2-plugin] update failed', error)
+      await writeOpLog(`update failed error=${error?.message || error}`)
       await this.reply(`更新失败：${error.message || error}`)
       return true
     }
@@ -312,6 +370,7 @@ export class Bd2Wiki extends plugin {
 
   async updateAtlas(e) {
     if (!e.isMaster) {
+      await writeOpLog(`atlas denied user=${e.user_id || 0}`)
       await this.reply('仅Bot主人可执行 #bd2图鉴更新。')
       return true
     }
@@ -320,6 +379,9 @@ export class Bd2Wiki extends plugin {
 
     try {
       const stat = await updateAtlasImageCache(false)
+      await writeOpLog(
+        `atlas done total=${stat.total} downloaded=${stat.downloaded} skipped=${stat.skipped} failed=${stat.failed}`
+      )
       await this.reply(
         [
           '图鉴头像缓存更新完成。',
@@ -332,6 +394,7 @@ export class Bd2Wiki extends plugin {
       return true
     } catch (error) {
       logger.error('[bd2-plugin] atlas update failed', error)
+      await writeOpLog(`atlas failed error=${error?.message || error}`)
       await this.reply(`图鉴更新失败：${error.message || error}`)
       return true
     }
@@ -339,10 +402,12 @@ export class Bd2Wiki extends plugin {
 
   async enableUpPush(e) {
     if (!e.isMaster) {
+      await writeOpLog(`push-enable denied user=${e.user_id || 0}`)
       await this.reply('仅Bot主人可执行 #bd2开启推送。')
       return true
     }
     if (!e.isGroup) {
+      await writeOpLog('push-enable denied not-group')
       await this.reply('请在群聊中执行该命令。')
       return true
     }
@@ -353,20 +418,24 @@ export class Bd2Wiki extends plugin {
     if (!state.enabledGroups.includes(gid)) {
       state.enabledGroups.push(gid)
       await savePushState(state)
+      await writeOpLog(`push-enable group=${gid}`)
       await this.reply('BD2 当前UP新增推送已开启。')
       return true
     }
 
+    await writeOpLog(`push-enable already group=${gid}`)
     await this.reply('当前群已开启UP新增推送。')
     return true
   }
 
   async disableUpPush(e) {
     if (!e.isMaster) {
+      await writeOpLog(`push-disable denied user=${e.user_id || 0}`)
       await this.reply('仅Bot主人可执行 #bd2关闭推送。')
       return true
     }
     if (!e.isGroup) {
+      await writeOpLog('push-disable denied not-group')
       await this.reply('请在群聊中执行该命令。')
       return true
     }
@@ -378,20 +447,24 @@ export class Bd2Wiki extends plugin {
     if (nextGroups.length !== state.enabledGroups.length) {
       state.enabledGroups = nextGroups
       await savePushState(state)
+      await writeOpLog(`push-disable group=${gid}`)
       await this.reply('BD2 当前UP新增推送已关闭。')
       return true
     }
 
+    await writeOpLog(`push-disable not-enabled group=${gid}`)
     await this.reply('当前群未开启UP新增推送。')
     return true
   }
 
   async showUpPushStatus(e) {
     if (!e.isMaster) {
+      await writeOpLog(`push-status denied user=${e.user_id || 0}`)
       await this.reply('仅Bot主人可查看推送状态。')
       return true
     }
     if (!e.isGroup) {
+      await writeOpLog('push-status denied not-group')
       await this.reply('请在群聊中执行该命令。')
       return true
     }
@@ -399,6 +472,7 @@ export class Bd2Wiki extends plugin {
     const state = await loadPushState()
     const gid = Number(e.group_id)
     const enabled = state.enabledGroups.includes(gid)
+    await writeOpLog(`push-status group=${gid} enabled=${enabled ? 1 : 0}`)
     await this.reply(enabled ? '当前群UP新增推送：已开启。' : '当前群UP新增推送：未开启。')
     return true
   }
@@ -408,6 +482,12 @@ export class Bd2Wiki extends plugin {
       const state = await loadPushState()
       if (!state.enabledGroups.length) return true
 
+      logger.mark(
+        '[bd2-plugin] up push task tick',
+        `enabledGroups=${state.enabledGroups.length}`
+      )
+      await writeOpLog(`task-tick enabledGroups=${state.enabledGroups.length}`)
+
       const upItems = await fetchCurrentUpReviews(false)
       const currentKeys = upItems.map((item) => upItemKey(item))
       const previousKeys = new Set(state.lastKeys || [])
@@ -415,12 +495,19 @@ export class Bd2Wiki extends plugin {
       if (!previousKeys.size) {
         state.lastKeys = currentKeys
         await savePushState(state)
+        await writeOpLog(`task-snapshot-init upItems=${upItems.length} savedKeys=${currentKeys.length}`)
         return true
       }
 
       const newItems = upItems.filter((item) => !previousKeys.has(upItemKey(item)))
       state.lastKeys = currentKeys
       await savePushState(state)
+
+      logger.mark(
+        '[bd2-plugin] up push task scan',
+        `upItems=${upItems.length} newItems=${newItems.length}`
+      )
+      await writeOpLog(`task-scan upItems=${upItems.length} newItems=${newItems.length}`)
 
       if (!newItems.length) return true
 
@@ -430,8 +517,12 @@ export class Bd2Wiki extends plugin {
           '[bd2-plugin] auto atlas update before up push',
           `total=${stat.total} downloaded=${stat.downloaded} skipped=${stat.skipped} failed=${stat.failed}`
         )
+        await writeOpLog(
+          `atlas total=${stat.total} downloaded=${stat.downloaded} skipped=${stat.skipped} failed=${stat.failed}`
+        )
       } catch (error) {
         logger.warn('[bd2-plugin] auto atlas update failed before up push', error?.message || error)
+        await writeOpLog(`task-atlas-failed error=${error?.message || error}`)
       }
 
       const textLines = ['【BD2 当前UP新增推送】']
@@ -501,12 +592,17 @@ export class Bd2Wiki extends plugin {
           for (const detailImage of detailImageMessages) {
             await sendGroupPush(gid, detailImage)
           }
+          await writeOpLog(
+            `push-ok group=${gid} newItems=${newItems.length} detailImages=${detailImageMessages.length}`
+          )
         } catch (error) {
           logger.warn('[bd2-plugin] up push failed', gid, error?.message || error)
+          await writeOpLog(`task-push-failed group=${gid} error=${error?.message || error}`)
         }
       }
     } catch (error) {
       logger.warn('[bd2-plugin] up push task failed', error?.message || error)
+      await writeOpLog(`task-failed error=${error?.message || error}`)
     }
 
     return true
@@ -514,6 +610,9 @@ export class Bd2Wiki extends plugin {
 
   async handleCommand(e) {
     const msg = String(e.msg || '').trim()
+    await writeOpLog(
+      `cmd user=${e.user_id || 0} group=${e.group_id || 0} isGroup=${e.isGroup ? 1 : 0} msg=${msg.replace(/\s+/g, ' ').slice(0, 160)}`
+    )
 
     if (/^#?bd2\s*帮助$/.test(msg)) {
       return this.help()
